@@ -27,6 +27,9 @@ func (s *OrderService) CreateOrder(ctx context.Context, createDTO dto.CreateOrde
 	if err := s.validateCreateFieldPermissions(authCtx, createDTO, file); err != nil {
 		return nil, err
 	}
+	if err := s.validateCreateFieldLengths(createDTO); err != nil {
+		return nil, err
+	}
 	if err := s.validateOrderRules(ctx, createDTO); err != nil {
 		return nil, err
 	}

@@ -16,6 +16,7 @@ import (
 func runStatusRouter(
 	secureGroup *echo.Group,
 	dbConn *pgxpool.Pool,
+	cacheRepository repositories.CacheRepositoryInterface,
 	logger *zap.Logger,
 	authMW *middleware.AuthMiddleware,
 	fileStorage filestorage.FileStorageInterface,
@@ -24,7 +25,7 @@ func runStatusRouter(
 	statusRepository := repositories.NewStatusRepository(dbConn)
 	userRepository := repositories.NewUserRepository(dbConn, logger)
 
-	statusService := services.NewStatusService(statusRepository, userRepository, fileStorage, logger)
+	statusService := services.NewStatusService(statusRepository, cacheRepository, userRepository, fileStorage, logger)
 
 	statusCtrl := controllers.NewStatusController(statusService, logger)
 

@@ -54,16 +54,10 @@ func toPositionResponseDTO(e *entities.Position) *dto.PositionResponseDTO {
 	}
 
 	return &dto.PositionResponseDTO{
-		ID:           uint64(e.ID),
-		Name:         e.Name,
-		StatusID:     statusID,
-		Type:         e.Type,
-		CreatedAt:    e.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:    e.UpdatedAt.Format(time.RFC3339),
-		DepartmentID: utils.Uint64PtrToNullInt(e.DepartmentID),
-		OtdelID:      utils.Uint64PtrToNullInt(e.OtdelID),
-		BranchID:     utils.Uint64PtrToNullInt(e.BranchID),
-		OfficeID:     utils.Uint64PtrToNullInt(e.OfficeID),
+		ID:       uint64(e.ID),
+		Name:     e.Name,
+		StatusID: statusID,
+		Type:     e.Type,
 	}
 }
 

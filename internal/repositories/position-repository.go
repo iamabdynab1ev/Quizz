@@ -40,8 +40,22 @@ var positionMap = map[string]string{
 	"updated_at":    "updated_at",
 }
 
+var positionProjectedSelectMap = map[string]string{
+	"id":            "id AS id",
+	"name":          "name AS name",
+	"department_id": "department_id AS department_id",
+	"otdel_id":      "otdel_id AS otdel_id",
+	"branch_id":     "branch_id AS branch_id",
+	"office_id":     "office_id AS office_id",
+	"type":          "type AS type",
+	"status_id":     "status_id AS status_id",
+	"created_at":    "created_at AS created_at",
+	"updated_at":    "updated_at AS updated_at",
+}
+
 type PositionRepositoryInterface interface {
 	FindByID(ctx context.Context, tx pgx.Tx, id uint64) (*entities.Position, error)
+	GetTypesByIDs(ctx context.Context, tx pgx.Tx, ids []uint64) (map[uint64]string, error)
 	GetAll(ctx context.Context, filter types.Filter) ([]*entities.Position, uint64, error)
 	Create(ctx context.Context, tx pgx.Tx, p entities.Position) (uint64, error)
 	Update(ctx context.Context, tx pgx.Tx, id uint64, p entities.Position) error
@@ -175,9 +189,125 @@ func (r *positionRepository) GetAll(ctx context.Context, filter types.Filter) ([
 	return positions, total, nil
 }
 
+func (r *positionRepository) GetAllProjected(ctx context.Context, filter types.Filter, fields []string) ([]map[string]any, uint64, error) {
+	psql := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+
+	applySearch := func(b sq.SelectBuilder) sq.SelectBuilder {
+		if filter.Search != "" {
+			return b.Where(sq.ILike{"name": "%" + filter.Search + "%"})
+		}
+		return b
+	}
+
+	var total uint64
+	if filter.WithPagination {
+		countBuilder := psql.Select("COUNT(id)").From(positionTable)
+		countBuilder = applySearch(countBuilder)
+
+		countFilter := filter
+		countFilter.WithPagination = false
+		countFilter.Sort = nil
+		countBuilder = bd.ApplyListParams(countBuilder, countFilter, positionMap)
+
+		countQuery, countArgs, err := countBuilder.ToSql()
+		if err != nil {
+			return nil, 0, fmt.Errorf("ошибка сборки SQL count: %w", err)
+		}
+
+		if err := r.storage.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("ошибка выполнения count: %w", err)
+		}
+		if total == 0 {
+			return []map[string]any{}, 0, nil
+		}
+	}
+
+	selectFields := make([]string, 0, len(fields))
+	for _, field := range fields {
+		expr, ok := positionProjectedSelectMap[field]
+		if !ok {
+			continue
+		}
+		selectFields = append(selectFields, expr)
+	}
+	if len(selectFields) == 0 {
+		return []map[string]any{}, total, nil
+	}
+
+	selectBuilder := psql.Select(selectFields...).From(positionTable)
+	selectBuilder = applySearch(selectBuilder)
+
+	if len(filter.Sort) == 0 {
+		selectBuilder = selectBuilder.OrderBy("id DESC")
+	}
+
+	selectBuilder = bd.ApplyListParams(selectBuilder, filter, positionMap)
+
+	query, args, err := selectBuilder.ToSql()
+	if err != nil {
+		return nil, 0, fmt.Errorf("ошибка сборки SQL select: %w", err)
+	}
+
+	rows, err := r.storage.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("ошибка выполнения select: %w", err)
+	}
+	defer rows.Close()
+
+	projected, err := pgx.CollectRows(rows, pgx.RowToMap)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return projected, total, nil
+}
+
 func (r *positionRepository) FindByID(ctx context.Context, tx pgx.Tx, id uint64) (*entities.Position, error) {
 	return r.findOnePosition(ctx, r.getQuerier(tx), sq.Eq{"id": id})
 }
+
+func (r *positionRepository) GetTypesByIDs(ctx context.Context, tx pgx.Tx, ids []uint64) (map[uint64]string, error) {
+	if len(ids) == 0 {
+		return map[uint64]string{}, nil
+	}
+
+	psql := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+	query, args, err := psql.
+		Select("id", "type").
+		From(positionTable).
+		Where(sq.Eq{"id": ids}).
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("ошибка сборки GetTypesByIDs: %w", err)
+	}
+
+	rows, err := r.getQuerier(tx).Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[uint64]string, len(ids))
+	for rows.Next() {
+		var (
+			id  uint64
+			typ sql.NullString
+		)
+		if err := rows.Scan(&id, &typ); err != nil {
+			return nil, err
+		}
+		if typ.Valid {
+			result[id] = typ.String
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 func (r *positionRepository) FindByName(ctx context.Context, tx pgx.Tx, name string) (*entities.Position, error) {
 	return r.findOnePosition(ctx, r.getQuerier(tx), sq.Eq{"name": name})
 }

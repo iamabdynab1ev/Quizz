@@ -5,7 +5,9 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"request-system/config"
 )
@@ -41,6 +43,7 @@ func ValidateFile(fileHeader *multipart.FileHeader, file io.ReadSeeker, contextN
 
 	// Определяем тип
 	mimeType := http.DetectContentType(buffer)
+	mimeType = normalizeOfficeDocumentMimeType(fileHeader.Filename, mimeType)
 
 	// Хак для SVG/XML, которые часто определяются как text/plain
 	if isPossibleXml(mimeType) {
@@ -66,4 +69,25 @@ func isPossibleXml(mime string) bool {
 
 func isSvgSignature(buf []byte) bool {
 	return len(buf) > 5 && (string(buf[:4]) == "<svg" || string(buf[:5]) == "<?xml")
+}
+
+func normalizeOfficeDocumentMimeType(fileName, detectedMimeType string) string {
+	if detectedMimeType != "application/zip" &&
+		detectedMimeType != "application/octet-stream" &&
+		detectedMimeType != "application/x-zip-compressed" {
+		return detectedMimeType
+	}
+
+	switch strings.ToLower(filepath.Ext(fileName)) {
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".odt":
+		return "application/vnd.oasis.opendocument.text"
+	case ".odp":
+		return "application/vnd.oasis.opendocument.presentation"
+	case ".ods":
+		return "application/vnd.oasis.opendocument.spreadsheet"
+	default:
+		return detectedMimeType
+	}
 }

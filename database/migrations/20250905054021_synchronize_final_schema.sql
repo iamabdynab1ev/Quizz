@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS public.attachments (
     user_id bigint NOT NULL,
     file_name character varying(255) NOT NULL,
     file_path character varying(255) NOT NULL,
-    file_type character varying(50) NOT NULL,
+    file_type character varying(100) NOT NULL,
     file_size bigint NOT NULL,
     created_at timestamp with time zone DEFAULT now()
 );

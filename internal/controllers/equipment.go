@@ -28,10 +28,9 @@ func NewEquipmentController(
 	}
 }
 
-// ----- РАБОЧИЕ МЕТОДЫ КОНТРОЛЛЕРА -----
-
 func (c *EquipmentController) GetEquipments(ctx echo.Context) error {
 	filter := utils.ParseFilterFromQuery(ctx.Request().URL.Query())
+	filter.Fields = nil
 
 	res, total, err := c.equipmentService.GetEquipments(ctx.Request().Context(), filter)
 	if err != nil {

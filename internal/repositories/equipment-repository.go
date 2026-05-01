@@ -34,6 +34,18 @@ var equipmentMap = map[string]string{
 	"updated_at":        "e.updated_at",
 }
 
+var equipmentProjectedSelectMap = map[string]string{
+	"id":                "e.id AS id",
+	"name":              "e.name AS name",
+	"address":           "e.address AS address",
+	"branch_id":         "e.branch_id AS branch_id",
+	"office_id":         "e.office_id AS office_id",
+	"equipment_type_id": "e.equipment_type_id AS equipment_type_id",
+	"status_id":         "e.status_id AS status_id",
+	"created_at":        "e.created_at AS created_at",
+	"updated_at":        "e.updated_at AS updated_at",
+}
+
 type EquipmentRepositoryInterface interface {
 	GetEquipments(ctx context.Context, filter types.Filter) ([]entities.Equipment, uint64, error)
 	FindEquipment(ctx context.Context, id uint64) (*entities.Equipment, error)
@@ -181,6 +193,83 @@ func (r *EquipmentRepository) GetEquipments(ctx context.Context, filter types.Fi
 	}
 
 	return equipments, total, rows.Err()
+}
+
+func (r *EquipmentRepository) GetEquipmentsProjected(ctx context.Context, filter types.Filter, fields []string) ([]map[string]any, uint64, error) {
+	psql := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+
+	applySearch := func(b sq.SelectBuilder) sq.SelectBuilder {
+		if filter.Search != "" {
+			pat := "%" + filter.Search + "%"
+			return b.Where(sq.Or{
+				sq.ILike{"e.name": pat},
+				sq.ILike{"e.address": pat},
+			})
+		}
+		return b
+	}
+
+	var total uint64
+	if filter.WithPagination {
+		countBuilder := psql.Select("COUNT(e.id)").From(equipmentTable + " e")
+		countBuilder = applySearch(countBuilder)
+
+		countFilter := filter
+		countFilter.WithPagination = false
+		countFilter.Sort = nil
+		countBuilder = bd.ApplyListParams(countBuilder, countFilter, equipmentMap)
+
+		countSql, countArgs, err := countBuilder.ToSql()
+		if err != nil {
+			return nil, 0, err
+		}
+
+		if err := r.storage.QueryRow(ctx, countSql, countArgs...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+		if total == 0 {
+			return []map[string]any{}, 0, nil
+		}
+	}
+
+	selectFields := make([]string, 0, len(fields))
+	for _, field := range fields {
+		expr, ok := equipmentProjectedSelectMap[field]
+		if !ok {
+			continue
+		}
+		selectFields = append(selectFields, expr)
+	}
+	if len(selectFields) == 0 {
+		return []map[string]any{}, total, nil
+	}
+
+	selectBuilder := psql.Select(selectFields...).From(equipmentTable + " e")
+	selectBuilder = applySearch(selectBuilder)
+
+	if len(filter.Sort) == 0 {
+		selectBuilder = selectBuilder.OrderBy("e.id DESC")
+	}
+
+	selectBuilder = bd.ApplyListParams(selectBuilder, filter, equipmentMap)
+
+	query, args, err := selectBuilder.ToSql()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := r.storage.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	projected, err := pgx.CollectRows(rows, pgx.RowToMap)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return projected, total, nil
 }
 
 func (r *EquipmentRepository) FindEquipment(ctx context.Context, id uint64) (*entities.Equipment, error) {

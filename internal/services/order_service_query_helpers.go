@@ -98,7 +98,11 @@ func (s *OrderService) toResponseDTO(o *entities.Order, cr, ex *entities.User, a
 
 	d.Attachments = make([]dto.AttachmentResponseDTO, len(atts))
 	for i, a := range atts {
-		d.Attachments[i] = dto.AttachmentResponseDTO{ID: a.ID, FileName: a.FileName, URL: "/uploads/" + a.FilePath}
+		d.Attachments[i] = dto.AttachmentResponseDTO{
+			ID:       a.ID,
+			FileName: a.FileName,
+			URL:      utils.BuildUploadURL(s.serverBaseURL, a.FilePath),
+		}
 	}
 	return d
 }

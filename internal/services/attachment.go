@@ -21,12 +21,13 @@ type AttachmentServiceInterface interface {
 }
 
 type AttachmentService struct {
-	repo        repositories.AttachmentRepositoryInterface
-	orderRepo   repositories.OrderRepositoryInterface
-	userRepo    repositories.UserRepositoryInterface
-	historyRepo repositories.OrderHistoryRepositoryInterface
-	fileStorage filestorage.FileStorageInterface
-	logger      *zap.Logger
+	repo          repositories.AttachmentRepositoryInterface
+	orderRepo     repositories.OrderRepositoryInterface
+	userRepo      repositories.UserRepositoryInterface
+	historyRepo   repositories.OrderHistoryRepositoryInterface
+	fileStorage   filestorage.FileStorageInterface
+	serverBaseURL string
+	logger        *zap.Logger
 }
 
 func NewAttachmentService(
@@ -35,15 +36,17 @@ func NewAttachmentService(
 	userRepo repositories.UserRepositoryInterface,
 	historyRepo repositories.OrderHistoryRepositoryInterface,
 	fileStorage filestorage.FileStorageInterface,
+	serverBaseURL string,
 	logger *zap.Logger,
 ) AttachmentServiceInterface {
 	return &AttachmentService{
-		repo:        repo,
-		orderRepo:   orderRepo,
-		userRepo:    userRepo,
-		historyRepo: historyRepo,
-		fileStorage: fileStorage,
-		logger:      logger,
+		repo:          repo,
+		orderRepo:     orderRepo,
+		userRepo:      userRepo,
+		historyRepo:   historyRepo,
+		fileStorage:   fileStorage,
+		serverBaseURL: serverBaseURL,
+		logger:        logger,
 	}
 }
 
@@ -74,7 +77,7 @@ func (s *AttachmentService) GetAttachmentsByOrderID(ctx context.Context, orderID
 		attachmentsDTO = append(attachmentsDTO, dto.AttachmentResponseDTO{
 			ID:       attachment.ID,
 			FileName: attachment.FileName,
-			URL:      "/uploads/" + attachment.FilePath,
+			URL:      utils.BuildUploadURL(s.serverBaseURL, attachment.FilePath),
 		})
 	}
 

@@ -80,7 +80,7 @@ func (s *OrderRoutingRuleService) checkIsHeadBranch(ctx context.Context, branchI
 	return false
 }
 
-func (s *OrderRoutingRuleService) toResponseDTO(ctx context.Context, entity *entities.OrderRoutingRule) (*dto.OrderRoutingRuleResponseDTO, error) {
+func (s *OrderRoutingRuleService) toResponseDTO(ctx context.Context, entity *entities.OrderRoutingRule, preloadedPositionType *string) (*dto.OrderRoutingRuleResponseDTO, error) {
 	if entity == nil {
 		return nil, nil
 	}
@@ -99,16 +99,52 @@ func (s *OrderRoutingRuleService) toResponseDTO(ctx context.Context, entity *ent
 		UpdatedAt:    entity.UpdatedAt.Format(time.RFC3339),
 	}
 
+	if preloadedPositionType != nil {
+		applyPositionTypeResponseFields(response, *preloadedPositionType)
+		return response, nil
+	}
+
 	if entity.PositionID != nil {
 		pos, err := s.positionRepo.FindByID(ctx, nil, uint64(*entity.PositionID))
 		if err == nil && pos != nil && pos.Type != nil {
-			response.PositionType = *pos.Type
-			if name, ok := constants.PositionTypeNames[constants.PositionType(*pos.Type)]; ok {
-				response.PositionTypeName = name
-			}
+			applyPositionTypeResponseFields(response, *pos.Type)
 		}
 	}
 	return response, nil
+}
+
+func (s *OrderRoutingRuleService) loadPositionTypes(ctx context.Context, entities []*entities.OrderRoutingRule) (map[uint64]string, error) {
+	positionIDs := make([]uint64, 0, len(entities))
+	seen := make(map[uint64]struct{}, len(entities))
+
+	for _, entity := range entities {
+		if entity == nil || entity.PositionID == nil {
+			continue
+		}
+		id := uint64(*entity.PositionID)
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		positionIDs = append(positionIDs, id)
+	}
+
+	if len(positionIDs) == 0 {
+		return map[uint64]string{}, nil
+	}
+
+	return s.positionRepo.GetTypesByIDs(ctx, nil, positionIDs)
+}
+
+func applyPositionTypeResponseFields(response *dto.OrderRoutingRuleResponseDTO, positionType string) {
+	if response == nil || positionType == "" {
+		return
+	}
+
+	response.PositionType = positionType
+	if name, ok := constants.PositionTypeNames[constants.PositionType(positionType)]; ok {
+		response.PositionTypeName = name
+	}
 }
 
 // === CREATE ===
@@ -206,7 +242,7 @@ func (s *OrderRoutingRuleService) Create(ctx context.Context, d dto.CreateOrderR
 	}
 
 	created, _ := s.repo.FindByID(ctx, newID)
-	return s.toResponseDTO(ctx, created)
+	return s.toResponseDTO(ctx, created, nil)
 }
 
 // === UPDATE ===
@@ -347,7 +383,7 @@ func (s *OrderRoutingRuleService) Update(ctx context.Context, id uint64, d dto.U
 	}
 
 	updated, _ := s.repo.FindByID(ctx, id)
-	return s.toResponseDTO(ctx, updated)
+	return s.toResponseDTO(ctx, updated, nil)
 }
 
 func (s *OrderRoutingRuleService) GetByID(ctx context.Context, id uint64) (*dto.OrderRoutingRuleResponseDTO, error) {
@@ -359,7 +395,7 @@ func (s *OrderRoutingRuleService) GetByID(ctx context.Context, id uint64) (*dto.
 	if err != nil {
 		return nil, err
 	}
-	return s.toResponseDTO(ctx, entity)
+	return s.toResponseDTO(ctx, entity, nil)
 }
 
 func (s *OrderRoutingRuleService) GetAll(ctx context.Context, limit, offset uint64, search string) (*dto.PaginatedResponse[dto.OrderRoutingRuleResponseDTO], error) {
@@ -371,9 +407,21 @@ func (s *OrderRoutingRuleService) GetAll(ctx context.Context, limit, offset uint
 	if err != nil {
 		return nil, err
 	}
+
+	positionTypes, err := s.loadPositionTypes(ctx, entities)
+	if err != nil {
+		return nil, err
+	}
+
 	dtos := make([]dto.OrderRoutingRuleResponseDTO, 0, len(entities))
 	for _, e := range entities {
-		responseDTO, _ := s.toResponseDTO(ctx, e)
+		var preloaded *string
+		if e != nil && e.PositionID != nil {
+			if positionType, ok := positionTypes[uint64(*e.PositionID)]; ok {
+				preloaded = &positionType
+			}
+		}
+		responseDTO, _ := s.toResponseDTO(ctx, e, preloaded)
 		dtos = append(dtos, *responseDTO)
 	}
 	return &dto.PaginatedResponse[dto.OrderRoutingRuleResponseDTO]{

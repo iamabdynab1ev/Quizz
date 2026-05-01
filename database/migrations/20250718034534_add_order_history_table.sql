@@ -11,7 +11,7 @@ CREATE TABLE order_history (
     attachment_id BIGINT,
     file_name VARCHAR(255),
     file_path VARCHAR(255),
-    file_type VARCHAR(50),
+    file_type VARCHAR(100),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT fk_order_history_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,

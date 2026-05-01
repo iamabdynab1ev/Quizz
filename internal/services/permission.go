@@ -12,7 +12,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// ИНТЕРФЕЙС ТЕПЕРЬ СОДЕРЖИТ ТОЛЬКО CRUD
 type PermissionServiceInterface interface {
 	GetPermissions(ctx context.Context, limit uint64, offset uint64, search string) ([]dto.PermissionDTO, uint64, error)
 	FindPermissionByID(ctx context.Context, id uint64) (*dto.PermissionDTO, error)
@@ -24,17 +23,20 @@ type PermissionServiceInterface interface {
 
 type PermissionService struct {
 	permissionRepository repositories.PermissionRepositoryInterface
+	cache                repositories.CacheRepositoryInterface
 	userRepo             repositories.UserRepositoryInterface
 	logger               *zap.Logger
 }
 
 func NewPermissionService(
 	permissionRepository repositories.PermissionRepositoryInterface,
+	cache repositories.CacheRepositoryInterface,
 	userRepo repositories.UserRepositoryInterface,
 	logger *zap.Logger,
 ) PermissionServiceInterface {
 	return &PermissionService{
 		permissionRepository: permissionRepository,
+		cache:                cache,
 		userRepo:             userRepo,
 		logger:               logger,
 	}
@@ -67,7 +69,25 @@ func (s *PermissionService) GetPermissions(ctx context.Context, limit uint64, of
 		return nil, 0, apperrors.ErrForbidden
 	}
 
-	return s.permissionRepository.GetPermissions(ctx, limit, offset, search)
+	cachePayload := struct {
+		Limit  uint64 `json:"limit"`
+		Offset uint64 `json:"offset"`
+		Search string `json:"search"`
+	}{Limit: limit, Offset: offset, Search: search}
+	if cached, ok := readVersionedListCache[dto.PermissionListResponseDTO](ctx, s.cache, "permission:list", cachePayload); ok {
+		return cached.List, uint64(cached.TotalCount), nil
+	}
+
+	permissions, total, err := s.permissionRepository.GetPermissions(ctx, limit, offset, search)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	writeVersionedListCache(ctx, s.cache, "permission:list", cachePayload, dto.PermissionListResponseDTO{
+		List:       permissions,
+		TotalCount: int64(total),
+	})
+	return permissions, total, nil
 }
 
 func (s *PermissionService) FindPermissionByID(ctx context.Context, id uint64) (*dto.PermissionDTO, error) {
@@ -90,7 +110,12 @@ func (s *PermissionService) CreatePermission(ctx context.Context, dto dto.Create
 	if !authz.CanDo(authz.PermissionsCreate, *authContext) {
 		return nil, apperrors.ErrForbidden
 	}
-	return s.permissionRepository.CreatePermission(ctx, dto)
+
+	created, err := s.permissionRepository.CreatePermission(ctx, dto)
+	if err == nil {
+		invalidateVersionedListCache(ctx, s.cache, "permission:list")
+	}
+	return created, err
 }
 
 func (s *PermissionService) UpdatePermission(ctx context.Context, id uint64, dto dto.UpdatePermissionDTO) (*dto.PermissionDTO, error) {
@@ -101,7 +126,12 @@ func (s *PermissionService) UpdatePermission(ctx context.Context, id uint64, dto
 	if !authz.CanDo(authz.PermissionsUpdate, *authContext) {
 		return nil, apperrors.ErrForbidden
 	}
-	return s.permissionRepository.UpdatePermission(ctx, id, dto)
+
+	updated, err := s.permissionRepository.UpdatePermission(ctx, id, dto)
+	if err == nil {
+		invalidateVersionedListCache(ctx, s.cache, "permission:list")
+	}
+	return updated, err
 }
 
 func (s *PermissionService) DeletePermission(ctx context.Context, id uint64) error {
@@ -112,7 +142,12 @@ func (s *PermissionService) DeletePermission(ctx context.Context, id uint64) err
 	if !authz.CanDo(authz.PermissionsDelete, *authContext) {
 		return apperrors.ErrForbidden
 	}
-	return s.permissionRepository.DeletePermission(ctx, id)
+
+	if err := s.permissionRepository.DeletePermission(ctx, id); err != nil {
+		return err
+	}
+	invalidateVersionedListCache(ctx, s.cache, "permission:list")
+	return nil
 }
 
 func (s *PermissionService) FindPermissionByName(ctx context.Context, name string) (*dto.PermissionDTO, error) {

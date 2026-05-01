@@ -98,6 +98,7 @@ type OrderService struct {
 	fileStorage           filestorage.FileStorageInterface
 	eventBus              *eventbus.Bus
 	logger                *zap.Logger
+	serverBaseURL         string
 	authPermissionService AuthPermissionServiceInterface
 	notificationService   NotificationServiceInterface
 	cacheRepo             repositories.CacheRepositoryInterface
@@ -115,6 +116,7 @@ func NewOrderService(
 	fileStorage filestorage.FileStorageInterface,
 	eventBus *eventbus.Bus,
 	logger *zap.Logger,
+	serverBaseURL string,
 	orderTypeRepo repositories.OrderTypeRepositoryInterface,
 	authPermissionService AuthPermissionServiceInterface,
 	notificationService NotificationServiceInterface,
@@ -132,6 +134,7 @@ func NewOrderService(
 		fileStorage:           fileStorage,
 		eventBus:              eventBus,
 		logger:                logger,
+		serverBaseURL:         serverBaseURL,
 		orderTypeRepo:         orderTypeRepo,
 		authPermissionService: authPermissionService,
 		notificationService:   notificationService,

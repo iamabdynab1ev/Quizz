@@ -35,7 +35,7 @@ type OrderResponseDTO struct {
 }
 
 type CreateOrderDTO struct {
-	Name        string     `json:"name" validate:"required"`
+	Name        string     `json:"name" validate:"required,max=500"`
 	OrderTypeID *uint64    `json:"order_type_id" validate:"required"`
 	Address     *string    `json:"address,omitempty"`
 	Comment     *string    `json:"comment,omitempty"`
@@ -55,7 +55,7 @@ type CreateOrderDTO struct {
 }
 
 type UpdateOrderDTO struct {
-	Name     *string    `json:"name,omitempty" validate:"omitempty,min=5"`
+	Name     *string    `json:"name,omitempty" validate:"omitempty,min=5,max=500"`
 	Address  *string    `json:"address,omitempty" validate:"omitempty,min=5"`
 	Comment  *string    `json:"comment,omitempty"`
 	Duration *time.Time `json:"duration,omitempty"`

@@ -55,6 +55,10 @@ type UserService struct {
 	logger                *zap.Logger
 }
 
+type userProjectedRepository interface {
+	GetUsersProjected(ctx context.Context, filter types.Filter, fields []string) ([]map[string]any, uint64, error)
+}
+
 func NewUserService(
 	txManager repositories.TxManagerInterface,
 	userRepository repositories.UserRepositoryInterface,
@@ -128,6 +132,25 @@ func (s *UserService) GetUsers(ctx context.Context, filter types.Filter) ([]dto.
 		dtos[i] = *d
 	}
 	return dtos, total, nil
+}
+
+func (s *UserService) GetUsersProjected(ctx context.Context, filter types.Filter) ([]map[string]any, uint64, error) {
+	if _, err := s.checkAccess(ctx, authz.UsersView, nil); err != nil {
+		return nil, 0, err
+	}
+
+	projectedRepo, ok := s.userRepository.(userProjectedRepository)
+	if !ok {
+		return nil, 0, apperrors.ErrInternalServer
+	}
+
+	rows, total, err := projectedRepo.GetUsersProjected(ctx, filter, filter.Fields)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	formatProjectedDateTimes(rows, filter.Fields, "2006-01-02 15:04:05")
+	return rows, total, nil
 }
 
 func (s *UserService) GetUsersForADBinding(ctx context.Context, filter types.Filter) ([]dto.UserDTO, error) {

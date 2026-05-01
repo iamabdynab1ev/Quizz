@@ -5,6 +5,7 @@ import (
 	"request-system/internal/controllers"
 	"request-system/internal/repositories"
 	"request-system/internal/services"
+	"request-system/pkg/config"
 	"request-system/pkg/filestorage"
 	"request-system/pkg/middleware"
 
@@ -17,6 +18,7 @@ func runAttachmentRouter(
 	group *echo.Group,
 	dbConn *pgxpool.Pool,
 	fileStorage filestorage.FileStorageInterface,
+	cfg *config.Config,
 	logger *zap.Logger,
 	authMW *middleware.AuthMiddleware,
 ) {
@@ -31,6 +33,7 @@ func runAttachmentRouter(
 		userRepo,
 		historyRepo,
 		fileStorage,
+		cfg.Server.BaseURL,
 		logger,
 	)
 

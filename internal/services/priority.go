@@ -24,16 +24,18 @@ type PriorityServiceInterface interface {
 
 type PriorityService struct {
 	repo     repositories.PriorityRepositoryInterface
+	cache    repositories.CacheRepositoryInterface
 	userRepo repositories.UserRepositoryInterface
 	logger   *zap.Logger
 }
 
 func NewPriorityService(
 	repo repositories.PriorityRepositoryInterface,
+	cache repositories.CacheRepositoryInterface,
 	userRepo repositories.UserRepositoryInterface,
 	logger *zap.Logger,
 ) PriorityServiceInterface {
-	return &PriorityService{repo: repo, userRepo: userRepo, logger: logger}
+	return &PriorityService{repo: repo, cache: cache, userRepo: userRepo, logger: logger}
 }
 
 func (s *PriorityService) buildAuthzContext(ctx context.Context) (*authz.Context, error) {
@@ -61,6 +63,15 @@ func (s *PriorityService) GetPriorities(ctx context.Context, limit, offset uint6
 		return nil, apperrors.ErrForbidden
 	}
 
+	cachePayload := struct {
+		Limit  uint64 `json:"limit"`
+		Offset uint64 `json:"offset"`
+		Search string `json:"search"`
+	}{Limit: limit, Offset: offset, Search: search}
+	if cached, ok := readVersionedListCache[dto.PaginatedResponse[dto.PriorityDTO]](ctx, s.cache, "priority:list", cachePayload); ok {
+		return &cached, nil
+	}
+
 	priorities, total, err := s.repo.GetPriorities(ctx, limit, offset, search)
 	if err != nil {
 		return nil, err
@@ -71,10 +82,12 @@ func (s *PriorityService) GetPriorities(ctx context.Context, limit, offset uint6
 		currentPage = (offset / limit) + 1
 	}
 
-	return &dto.PaginatedResponse[dto.PriorityDTO]{
+	response := &dto.PaginatedResponse[dto.PriorityDTO]{
 		List:       priorities,
 		Pagination: dto.PaginationObject{TotalCount: total, Page: currentPage, Limit: limit},
-	}, nil
+	}
+	writeVersionedListCache(ctx, s.cache, "priority:list", cachePayload, *response)
+	return response, nil
 }
 
 func (s *PriorityService) FindPriority(ctx context.Context, id uint64) (*dto.PriorityDTO, error) {
@@ -102,7 +115,11 @@ func (s *PriorityService) CreatePriority(ctx context.Context, createDTO dto.Crea
 		s.logger.Debug("Поле 'code' не было предоставлено, сгенерировано автоматически", zap.String("generated_code", createDTO.Code))
 	}
 
-	return s.repo.CreatePriority(ctx, createDTO)
+	created, err := s.repo.CreatePriority(ctx, createDTO)
+	if err == nil {
+		invalidateVersionedListCache(ctx, s.cache, "priority:list")
+	}
+	return created, err
 }
 
 func (s *PriorityService) UpdatePriority(ctx context.Context, id uint64, updateDTO dto.UpdatePriorityDTO) (*dto.PriorityDTO, error) {
@@ -119,7 +136,11 @@ func (s *PriorityService) UpdatePriority(ctx context.Context, id uint64, updateD
 		return nil, err
 	}
 
-	return s.repo.UpdatePriority(ctx, id, updateDTO)
+	updated, err := s.repo.UpdatePriority(ctx, id, updateDTO)
+	if err == nil {
+		invalidateVersionedListCache(ctx, s.cache, "priority:list")
+	}
+	return updated, err
 }
 
 func (s *PriorityService) DeletePriority(ctx context.Context, id uint64) error {
@@ -131,5 +152,9 @@ func (s *PriorityService) DeletePriority(ctx context.Context, id uint64) error {
 		return apperrors.ErrForbidden
 	}
 
-	return s.repo.DeletePriority(ctx, id)
+	if err := s.repo.DeletePriority(ctx, id); err != nil {
+		return err
+	}
+	invalidateVersionedListCache(ctx, s.cache, "priority:list")
+	return nil
 }

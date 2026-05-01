@@ -67,21 +67,11 @@ func eqEntityToDTO(entity *entities.Equipment) *dto.EquipmentDTO {
 		return nil
 	}
 
-	var createdAt, updatedAt string
-	if entity.CreatedAt != nil {
-		createdAt = entity.CreatedAt.Format("2006-01-02 15:04:05")
-	}
-	if entity.UpdatedAt != nil {
-		updatedAt = entity.UpdatedAt.Format("2006-01-02 15:04:05")
-	}
-
 	dtoResponse := &dto.EquipmentDTO{
-		ID:        entity.ID,
-		Name:      entity.Name,
-		Address:   entity.Address,
-		StatusID:  entity.StatusID,
-		CreatedAt: createdAt,
-		UpdatedAt: updatedAt,
+		ID:       entity.ID,
+		Name:     entity.Name,
+		Address:  entity.Address,
+		StatusID: entity.StatusID,
 	}
 
 	// >>> ВОТ ИСПРАВЛЕНИЕ: Мы не пишем 'dto.' перед типами из того же пакета <<<
@@ -127,15 +117,6 @@ func (s *EquipmentService) GetEquipments(ctx context.Context, filter types.Filte
 	// >>> ИЗМЕНЕНИЕ ЗДЕСЬ: Мы конвертируем в новый DTO для списка <<<
 	dtos := make([]dto.EquipmentListResponseDTO, 0, len(entities))
 	for _, eq := range entities {
-
-		var createdAt, updatedAt string
-		if eq.CreatedAt != nil {
-			createdAt = eq.CreatedAt.Format("2006-01-02 15:04:05")
-		}
-		if eq.UpdatedAt != nil {
-			updatedAt = eq.UpdatedAt.Format("2006-01-02 15:04:05")
-		}
-
 		dtos = append(dtos, dto.EquipmentListResponseDTO{
 			ID:              eq.ID,
 			Name:            eq.Name,
@@ -144,8 +125,6 @@ func (s *EquipmentService) GetEquipments(ctx context.Context, filter types.Filte
 			OfficeID:        eq.OfficeID,
 			EquipmentTypeID: eq.EquipmentTypeID,
 			StatusID:        eq.StatusID,
-			CreatedAt:       createdAt,
-			UpdatedAt:       updatedAt,
 		})
 	}
 	return dtos, total, nil

@@ -167,6 +167,10 @@ func (s *OrderService) attachFileToOrderInTx(ctx context.Context, tx pgx.Tx, ord
 	}
 	defer reader.Close()
 
+	if err := s.validateOrderAttachment(file, reader); err != nil {
+		return 0, err
+	}
+
 	filePath, err := s.fileStorage.Save(reader, file.Filename, "orders")
 	if err != nil {
 		return 0, err

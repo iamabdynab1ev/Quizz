@@ -32,6 +32,7 @@ const (
 	maxMessageAgeSeconds = 600
 	commandCooldown      = 1000 * time.Millisecond // 1 секунда между командами
 	callbackCooldown     = 500 * time.Millisecond  // 0.5 секунды между кликами
+	callbackNoticeDelay  = 700 * time.Millisecond
 	menuCooldown         = 2000 * time.Millisecond // 2 секунды для меню и статистики
 	stateExpiration      = 60 * time.Minute        // состояние хранится 60 минут
 	goroutineTimeout     = 45 * time.Second
@@ -62,6 +63,12 @@ type TelegramController struct {
 	statusRepo            repositories.StatusRepositoryInterface
 	userRepo              repositories.UserRepositoryInterface
 	orderHistoryRepo      repositories.OrderHistoryRepositoryInterface
+	priorityRepo          repositories.PriorityRepositoryInterface
+	departmentRepo        repositories.DepartmentRepositoryInterface
+	otdelRepo             repositories.OtdelRepositoryInterface
+	branchRepo            repositories.BranchRepositoryInterface
+	officeRepo            repositories.OfficeRepositoryInterface
+	equipmentRepo         repositories.EquipmentRepositoryInterface
 	tgService             telegram.ServiceInterface
 	cacheRepo             repositories.CacheRepositoryInterface
 	authPermissionService services.AuthPermissionServiceInterface
@@ -87,6 +94,12 @@ func NewTelegramController(
 	statusRepo repositories.StatusRepositoryInterface,
 	userRepo repositories.UserRepositoryInterface,
 	orderHistoryRepo repositories.OrderHistoryRepositoryInterface,
+	priorityRepo repositories.PriorityRepositoryInterface,
+	departmentRepo repositories.DepartmentRepositoryInterface,
+	otdelRepo repositories.OtdelRepositoryInterface,
+	branchRepo repositories.BranchRepositoryInterface,
+	officeRepo repositories.OfficeRepositoryInterface,
+	equipmentRepo repositories.EquipmentRepositoryInterface,
 	authPermissionService services.AuthPermissionServiceInterface,
 	logger *zap.Logger,
 	orderTypeRepo repositories.OrderTypeRepositoryInterface,
@@ -101,6 +114,12 @@ func NewTelegramController(
 		statusRepo:            statusRepo,
 		userRepo:              userRepo,
 		orderHistoryRepo:      orderHistoryRepo,
+		priorityRepo:          priorityRepo,
+		departmentRepo:        departmentRepo,
+		otdelRepo:             otdelRepo,
+		branchRepo:            branchRepo,
+		officeRepo:            officeRepo,
+		equipmentRepo:         equipmentRepo,
 		authPermissionService: authPermissionService,
 		deduplicator:          NewRequestDeduplicator(),
 		logger:                logger,
@@ -167,7 +186,7 @@ func (c *TelegramController) HandleTelegramWebhook(ctx echo.Context) error {
 
 		chatID := update.CallbackQuery.Message.Chat.ID
 		if !c.deduplicator.TryAcquire(chatID, "cb", callbackCooldown) {
-			go c.tgService.AnswerCallbackQuery(context.Background(), update.CallbackQuery.ID, "")
+			go c.tgService.AnswerCallbackQuery(context.Background(), update.CallbackQuery.ID, "Подождите, предыдущая команда еще обрабатывается")
 			return ctx.NoContent(http.StatusOK)
 		}
 
@@ -201,7 +220,7 @@ func (c *TelegramController) handleCallbackQueryAsync(query *TelegramCallbackQue
 	bgCtx, cancel := context.WithTimeout(bgCtx, goroutineTimeout)
 	defer cancel()
 
-	go c.ensureCallbackAnswered(bgCtx, 1200*time.Millisecond)
+	go c.ensureCallbackAnswered(bgCtx, callbackNoticeDelay)
 	defer func() {
 		_ = c.answerCallback(bgCtx, "")
 	}()
@@ -214,6 +233,14 @@ func (c *TelegramController) handleCallbackQueryAsync(query *TelegramCallbackQue
 			return
 		}
 		c.logger.Error("Callback error", zap.Error(err))
+		if renderErr := c.renderHomeScreen(
+			bgCtx,
+			query.Message.Chat.ID,
+			query.Message.MessageID,
+			"❌ Не удалось обработать действие.\nПопробуйте еще раз.",
+		); renderErr != nil {
+			c.logger.Error("Telegram callback fallback render failed", zap.Error(renderErr))
+		}
 	}
 }
 
@@ -626,6 +653,6 @@ func (c *TelegramController) ensureCallbackAnswered(ctx context.Context, wait ti
 	case <-ctx.Done():
 		return
 	case <-timer.C:
-		_ = c.answerCallback(ctx, "")
+		_ = c.answerCallback(ctx, "Обрабатываю...")
 	}
 }

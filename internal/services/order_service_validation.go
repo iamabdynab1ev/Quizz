@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
@@ -14,8 +15,10 @@ import (
 	"request-system/internal/authz"
 	"request-system/internal/dto"
 	"request-system/internal/entities"
+	pkgconstants "request-system/pkg/constants"
 	apperrors "request-system/pkg/errors"
 	"request-system/pkg/utils"
+	"request-system/pkg/validation"
 )
 
 func buildOrderRoutingContext(orderTypeID, departmentID, otdelID, branchID, officeID *uint64) OrderContext {
@@ -174,6 +177,56 @@ func (s *OrderService) validateCreateFieldPermissions(authCtx *authz.Context, cr
 	}
 
 	return nil
+}
+
+func (s *OrderService) validateCreateFieldLengths(createDTO dto.CreateOrderDTO) error {
+	return validateOrderNameLength(createDTO.Name)
+}
+
+func (s *OrderService) validateUpdateFieldLengths(updateDTO dto.UpdateOrderDTO) error {
+	if updateDTO.Name != nil {
+		if err := validateOrderNameLength(*updateDTO.Name); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *OrderService) validateOrderAttachment(fileHeader *multipart.FileHeader, file multipart.File) error {
+	if err := validateAttachmentFileName(fileHeader); err != nil {
+		return err
+	}
+
+	if err := validation.ValidateFile(fileHeader, file, "order_document"); err != nil {
+		return apperrors.NewBadRequestError(err.Error())
+	}
+
+	return nil
+}
+
+func validateOrderNameLength(name string) error {
+	if utf8.RuneCountInString(name) <= pkgconstants.OrderNameMaxLength {
+		return nil
+	}
+
+	return apperrors.NewBadRequestError(
+		fmt.Sprintf("Поле 'Название' должно содержать максимум %d символов.", pkgconstants.OrderNameMaxLength),
+	)
+}
+
+func validateAttachmentFileName(fileHeader *multipart.FileHeader) error {
+	if fileHeader == nil {
+		return nil
+	}
+
+	if utf8.RuneCountInString(fileHeader.Filename) <= pkgconstants.AttachmentFileNameMaxLength {
+		return nil
+	}
+
+	return apperrors.NewBadRequestError(
+		fmt.Sprintf("Поле 'Имя файла' должно содержать максимум %d символов.", pkgconstants.AttachmentFileNameMaxLength),
+	)
 }
 
 func buildMissingResponsibleError(order *entities.Order) string {

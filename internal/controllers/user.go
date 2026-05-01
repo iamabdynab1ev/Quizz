@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,10 +13,12 @@ import (
 
 	"request-system/config"
 	"request-system/internal/dto"
+	"request-system/internal/queryfields"
 	"request-system/internal/services"
 	"request-system/pkg/constants"
 	apperrors "request-system/pkg/errors"
 	"request-system/pkg/filestorage"
+	"request-system/pkg/types"
 	"request-system/pkg/utils"
 	"request-system/pkg/validation"
 
@@ -249,6 +252,27 @@ func (c *UserController) errorResponse(ctx echo.Context, err error) error {
 func (c *UserController) GetUsers(ctx echo.Context) error {
 	reqCtx := ctx.Request().Context()
 	filter := utils.ParseFilterFromQuery(ctx.Request().URL.Query())
+
+	fields, err := queryfields.NormalizeUserListFields(filter.Fields)
+	if err != nil {
+		return c.errorResponse(ctx, apperrors.NewBadRequestError(err.Error()))
+	}
+	filter.Fields = fields
+
+	if len(filter.Fields) > 0 {
+		projectedService, ok := c.userService.(interface {
+			GetUsersProjected(context.Context, types.Filter) ([]map[string]any, uint64, error)
+		})
+		if !ok {
+			return c.errorResponse(ctx, apperrors.ErrInternalServer)
+		}
+
+		res, totalCount, err := projectedService.GetUsersProjected(reqCtx, filter)
+		if err != nil {
+			return c.errorResponse(ctx, err)
+		}
+		return utils.SuccessResponse(ctx, res, "Пользователи успешно получены", http.StatusOK, totalCount)
+	}
 
 	res, totalCount, err := c.userService.GetUsers(reqCtx, filter)
 	if err != nil {

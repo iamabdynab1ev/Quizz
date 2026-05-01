@@ -16,6 +16,7 @@ import (
 func RunPriorityRouter(
 	secureGroup *echo.Group,
 	dbConn *pgxpool.Pool,
+	cacheRepository repositories.CacheRepositoryInterface,
 	logger *zap.Logger,
 	authMW *middleware.AuthMiddleware,
 ) {
@@ -23,7 +24,7 @@ func RunPriorityRouter(
 	userRepository := repositories.NewUserRepository(dbConn, logger) // Предполагаем, что он уже есть
 
 	// Внедряем FileStorage в сервис
-	priorityService := services.NewPriorityService(priorityRepository, userRepository, logger)
+	priorityService := services.NewPriorityService(priorityRepository, cacheRepository, userRepository, logger)
 	priorityCtrl := controllers.NewPriorityController(priorityService, logger)
 
 	priorities := secureGroup.Group("/priority")

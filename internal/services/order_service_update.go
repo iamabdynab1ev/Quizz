@@ -41,6 +41,9 @@ func (s *OrderService) UpdateOrder(ctx context.Context, orderID uint64, updateDT
 	if err := s.validateUpdateFieldPermissions(authCtx, explicitFields, file); err != nil {
 		return nil, err
 	}
+	if err := s.validateUpdateFieldLengths(updateDTO); err != nil {
+		return nil, err
+	}
 	if err := s.validateUpdateCommentRequirement(ctx, currentOrder, updateDTO); err != nil {
 		return nil, err
 	}

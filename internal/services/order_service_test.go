@@ -3,12 +3,14 @@ package services
 import (
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"request-system/internal/authz"
 	"request-system/internal/dto"
 	"request-system/internal/entities"
+	pkgconstants "request-system/pkg/constants"
 )
 
 func TestValidateCreateFieldPermissions_RejectsForbiddenField(t *testing.T) {
@@ -108,6 +110,37 @@ func TestDashboardSummaryAffected(t *testing.T) {
 	newOrder.StatusID = 2
 	if !dashboardSummaryAffected(oldOrder, newOrder) {
 		t.Fatal("expected status change to affect dashboard summary")
+	}
+}
+
+func TestValidateCreateFieldLengths_RejectsTooLongName(t *testing.T) {
+	service := &OrderService{}
+	createDTO := dto.CreateOrderDTO{
+		Name: strings.Repeat("a", pkgconstants.OrderNameMaxLength+1),
+	}
+
+	err := service.validateCreateFieldLengths(createDTO)
+	if err == nil {
+		t.Fatal("expected validation error for too long order name")
+	}
+
+	if !strings.Contains(err.Error(), "500") {
+		t.Fatalf("expected error to mention max length, got %v", err)
+	}
+}
+
+func TestValidateAttachmentFileName_RejectsTooLongFileName(t *testing.T) {
+	file := &multipart.FileHeader{
+		Filename: strings.Repeat("a", pkgconstants.AttachmentFileNameMaxLength+1),
+	}
+
+	err := validateAttachmentFileName(file)
+	if err == nil {
+		t.Fatal("expected validation error for too long file name")
+	}
+
+	if !strings.Contains(err.Error(), "500") {
+		t.Fatalf("expected error to mention max length, got %v", err)
 	}
 }
 

@@ -27,8 +27,6 @@ type EquipmentDTO struct {
 	Office        ShortOfficeDTO        `json:"office"`
 	EquipmentType ShortEquipmentTypeDTO `json:"equipment"`
 	StatusID      uint64                `json:"status_id"`
-	CreatedAt     string                `json:"created_at"`
-	UpdatedAt     string                `json:"updated_at"`
 }
 type EquipmentListResponseDTO struct {
 	ID              uint64  `json:"id"`
@@ -38,8 +36,6 @@ type EquipmentListResponseDTO struct {
 	OfficeID        *uint64 `json:"office_id"`
 	EquipmentTypeID uint64  `json:"equipment_type_id"`
 	StatusID        uint64  `json:"status_id"`
-	CreatedAt       string  `json:"created_at"`
-	UpdatedAt       string  `json:"updated_at"`
 }
 type ShortEquipmentDTO struct {
 	ID   uint64 `json:"id"`

@@ -23,16 +23,10 @@ type UpdatePositionDTO struct {
 }
 
 type PositionResponseDTO struct {
-	ID           uint64   `json:"id"`
-	Name         string   `json:"name"`
-	DepartmentID null.Int `json:"department_id,omitempty"`
-	OtdelID      null.Int `json:"otdel_id,omitempty"`
-	BranchID     null.Int `json:"branch_id,omitempty"`
-	OfficeID     null.Int `json:"office_id,omitempty"`
-	Type         *string  `json:"type,omitempty"`
-	StatusID     int      `json:"status_id"`
-	CreatedAt    string   `json:"created_at"`
-	UpdatedAt    string   `json:"updated_at"`
+	ID       uint64  `json:"id"`
+	Name     string  `json:"name"`
+	Type     *string `json:"type,omitempty"`
+	StatusID int     `json:"status_id"`
 }
 
 type ShortPositionDTO struct {

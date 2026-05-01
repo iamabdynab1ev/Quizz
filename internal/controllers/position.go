@@ -32,10 +32,12 @@ func (c *PositionController) Create(ctx echo.Context) error {
 	if err := ctx.Validate(&d); err != nil {
 		return utils.ErrorResponse(ctx, err, c.logger)
 	}
+
 	result, err := c.service.Create(ctx.Request().Context(), d)
 	if err != nil {
 		return utils.ErrorResponse(ctx, err, c.logger)
 	}
+
 	return utils.SuccessResponse(ctx, result, "Должность создана", http.StatusCreated)
 }
 
@@ -64,6 +66,7 @@ func (c *PositionController) Update(ctx echo.Context) error {
 	if err != nil {
 		return utils.ErrorResponse(ctx, err, c.logger)
 	}
+
 	return utils.SuccessResponse(ctx, result, "Должность обновлена", http.StatusOK)
 }
 
@@ -77,6 +80,7 @@ func (c *PositionController) Delete(ctx echo.Context) error {
 	if err := c.service.Delete(ctx.Request().Context(), id); err != nil {
 		return utils.ErrorResponse(ctx, err, c.logger)
 	}
+
 	return utils.SuccessResponse(ctx, struct{}{}, "Должность удалена", http.StatusOK)
 }
 
@@ -91,11 +95,14 @@ func (c *PositionController) GetByID(ctx echo.Context) error {
 	if err != nil {
 		return utils.ErrorResponse(ctx, err, c.logger)
 	}
+
 	return utils.SuccessResponse(ctx, result, "Должность найдена", http.StatusOK)
 }
 
 func (c *PositionController) GetAll(ctx echo.Context) error {
 	filter := utils.ParseFilterFromQuery(ctx.Request().URL.Query())
+	filter.Fields = nil
+
 	paginatedResult, err := c.service.GetAll(ctx.Request().Context(), filter)
 	if err != nil {
 		return utils.ErrorResponse(ctx, err, c.logger)

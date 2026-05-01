@@ -19,6 +19,7 @@ import (
 	"request-system/pkg/config"
 	"request-system/pkg/eventbus"
 	"request-system/pkg/telegram"
+	"request-system/pkg/utils"
 	"request-system/pkg/websocket"
 )
 
@@ -268,7 +269,7 @@ func (l *NotificationListener) formatGroupedMessage(ctx context.Context, events 
 			}
 		case "ATTACHMENT_ADD":
 			if item.Attachment != nil {
-				fileURL := l.serverCfg.BaseURL + "/uploads/" + item.Attachment.FilePath
+				fileURL := utils.BuildUploadURL(l.serverCfg.BaseURL, item.Attachment.FilePath)
 				attachmentText = fmt.Sprintf("📎 Прикреплен файл: [%s](%s)", escape(item.Attachment.FileName), fileURL)
 			}
 		}
@@ -372,7 +373,7 @@ func (l *NotificationListener) formatWebSocketPayload(ctx context.Context, event
 			}
 		case "ATTACHMENT_ADD":
 			if item.Attachment != nil {
-				link := "/uploads/" + item.Attachment.FilePath
+				link := utils.BuildUploadURL(l.serverCfg.BaseURL, item.Attachment.FilePath)
 				attachmentLink = &link
 				changes = append(changes, websocket.ChangeInfo{Type: "ATTACHMENT_ADD", Text: fmt.Sprintf("Прикреплен файл: %s", item.Attachment.FileName)})
 			}

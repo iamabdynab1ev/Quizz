@@ -53,6 +53,31 @@ var userMap = map[string]string{
 	"is_head":    "u.is_head",
 }
 
+var userProjectedSelectMap = map[string]string{
+	"id":                   "u.id AS id",
+	"fio":                  "u.fio AS fio",
+	"email":                "u.email AS email",
+	"username":             "u.username AS username",
+	"phone_number":         "u.phone_number AS phone_number",
+	"position_id":          "u.position_id AS position_id",
+	"status_id":            "u.status_id AS status_id",
+	"status_code":          "s.code AS status_code",
+	"branch_id":            "u.branch_id AS branch_id",
+	"department_id":        "u.department_id AS department_id",
+	"office_id":            "u.office_id AS office_id",
+	"otdel_id":             "u.otdel_id AS otdel_id",
+	"branch_name":          "b.name AS branch_name",
+	"department_name":      "d.name AS department_name",
+	"position_name":        "p.name AS position_name",
+	"otdel_name":           "ot.name AS otdel_name",
+	"office_name":          "off.name AS office_name",
+	"photo_url":            "u.photo_url AS photo_url",
+	"must_change_password": "u.must_change_password AS must_change_password",
+	"is_head":              "u.is_head AS is_head",
+	"created_at":           "u.created_at AS created_at",
+	"updated_at":           "u.updated_at AS updated_at",
+}
+
 type UserRepositoryInterface interface {
 	BeginTx(ctx context.Context) (pgx.Tx, error)
 	CreateFromSync(ctx context.Context, tx pgx.Tx, user entities.User) (uint64, error)
@@ -292,6 +317,135 @@ func (r *UserRepository) GetUsers(ctx context.Context, filter types.Filter) ([]e
 	// Используем CollectRows (у тебя он был раньше), он сам смапит поля
 	users, err := pgx.CollectRows(rows, pgx.RowToStructByName[entities.User])
 	return users, totalCount, err
+}
+
+func (r *UserRepository) GetUsersProjected(ctx context.Context, filter types.Filter, fields []string) ([]map[string]any, uint64, error) {
+	psql := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
+
+	applySearch := func(b sq.SelectBuilder) sq.SelectBuilder {
+		if filter.Search != "" {
+			pat := "%" + filter.Search + "%"
+			return b.Where(sq.Or{
+				sq.ILike{"u.fio": pat},
+				sq.ILike{"u.email": pat},
+				sq.ILike{"u.username": pat},
+			})
+		}
+		return b
+	}
+
+	var totalCount uint64
+	if filter.WithPagination {
+		countBuilder := psql.Select("count(*)").From("users u").Where(sq.Eq{"u.deleted_at": nil})
+		countBuilder = applySearch(countBuilder)
+
+		countFilter := filter
+		countFilter.WithPagination = false
+		countFilter.Sort = nil
+
+		countBuilder = bd.ApplyListParams(countBuilder, countFilter, userMap)
+
+		sqlCount, argsCount, err := countBuilder.ToSql()
+		if err != nil {
+			return nil, 0, fmt.Errorf("ошибка построения запроса подсчёта: %w", err)
+		}
+		if err := r.storage.QueryRow(ctx, sqlCount, argsCount...).Scan(&totalCount); err != nil {
+			return nil, 0, err
+		}
+		if totalCount == 0 {
+			return []map[string]any{}, 0, nil
+		}
+	}
+
+	selectFields := make([]string, 0, len(fields))
+	for _, field := range fields {
+		expr, ok := userProjectedSelectMap[field]
+		if !ok {
+			continue
+		}
+		selectFields = append(selectFields, expr)
+	}
+	if len(selectFields) == 0 {
+		return []map[string]any{}, totalCount, nil
+	}
+
+	selectBuilder := psql.Select(selectFields...).From("users u").Where(sq.Eq{"u.deleted_at": nil})
+
+	if needsUserStatusJoin(fields) {
+		selectBuilder = selectBuilder.LeftJoin("statuses s ON u.status_id = s.id")
+	}
+	if needsUserPositionJoin(fields) {
+		selectBuilder = selectBuilder.LeftJoin("positions p ON u.position_id = p.id")
+	}
+	if needsUserBranchJoin(fields) {
+		selectBuilder = selectBuilder.LeftJoin("branches b ON u.branch_id = b.id")
+	}
+	if needsUserDepartmentJoin(fields) {
+		selectBuilder = selectBuilder.LeftJoin("departments d ON u.department_id = d.id")
+	}
+	if needsUserOtdelJoin(fields) {
+		selectBuilder = selectBuilder.LeftJoin("otdels ot ON u.otdel_id = ot.id")
+	}
+	if needsUserOfficeJoin(fields) {
+		selectBuilder = selectBuilder.LeftJoin("offices off ON u.office_id = off.id")
+	}
+
+	selectBuilder = applySearch(selectBuilder)
+	if len(filter.Sort) == 0 {
+		selectBuilder = selectBuilder.OrderBy("u.created_at DESC")
+	}
+	selectBuilder = bd.ApplyListParams(selectBuilder, filter, userMap)
+
+	sqlSelect, argsSelect, err := selectBuilder.ToSql()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := r.storage.Query(ctx, sqlSelect, argsSelect...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	projected, err := pgx.CollectRows(rows, pgx.RowToMap)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return projected, totalCount, nil
+}
+
+func needsUserStatusJoin(fields []string) bool {
+	return containsUserField(fields, "status_code")
+}
+
+func needsUserPositionJoin(fields []string) bool {
+	return containsUserField(fields, "position_name")
+}
+
+func needsUserBranchJoin(fields []string) bool {
+	return containsUserField(fields, "branch_name")
+}
+
+func needsUserDepartmentJoin(fields []string) bool {
+	return containsUserField(fields, "department_name")
+}
+
+func needsUserOtdelJoin(fields []string) bool {
+	return containsUserField(fields, "otdel_name")
+}
+
+func needsUserOfficeJoin(fields []string) bool {
+	return containsUserField(fields, "office_name")
+}
+
+func containsUserField(fields []string, target string) bool {
+	for _, field := range fields {
+		if field == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *UserRepository) CreateUser(ctx context.Context, tx pgx.Tx, u *entities.User) (uint64, error) {

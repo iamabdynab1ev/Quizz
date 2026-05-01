@@ -21,7 +21,7 @@ var UploadContexts = map[string]UploadConfig{
 			"image/jpeg", "image/png", "application/pdf", "image/jpg", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 			"application/vnd.oasis.opendocument.text", "application/vnd.oasis.opendocument.presentation", "application/vnd.oasis.opendocument.spreadsheet",
 		},
-		MaxSizeMB:  20,
+		MaxSizeMB:  30,
 		PathPrefix: "orders",
 	},
 	"icon_small": {

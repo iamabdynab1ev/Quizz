@@ -71,16 +71,37 @@ func InitRouter(
 	runOrderTypeRouter(secureGroup, servicesBundle.orderType, loggers.Main, authMW)
 	runPositionRouter(secureGroup, servicesBundle.position, loggers.Main, authMW)
 	runOrderRoutingRuleRouter(secureGroup, servicesBundle.orderRule, loggers.Main, authMW)
-	runAttachmentRouter(secureGroup, dbConn, fileStorage, loggers.Main, authMW)
-	runStatusRouter(secureGroup, dbConn, loggers.Main, authMW, fileStorage)
+	runAttachmentRouter(secureGroup, dbConn, fileStorage, cfg, loggers.Main, authMW)
+	runStatusRouter(secureGroup, dbConn, repos.cache, loggers.Main, authMW, fileStorage)
 	runOrderHistoryRouter(secureGroup, controllersBundle.history, authMW)
-	RunPriorityRouter(secureGroup, dbConn, loggers.Main, authMW)
+	RunPriorityRouter(secureGroup, dbConn, repos.cache, loggers.Main, authMW)
 	runDepartmentRouter(secureGroup, dbConn, loggers.Main, authMW, txManager)
 	runOtdelRouter(secureGroup, dbConn, loggers.Main, authMW, txManager)
 	runEquipmentTypeRouter(secureGroup, dbConn, loggers.Main, authMW)
 	runBranchRouter(secureGroup, dbConn, loggers.Main, txManager, authMW)
 	runOfficeRouter(secureGroup, servicesBundle.office, loggers.Main, authMW)
-	runTelegramRouter(e, servicesBundle.user, servicesBundle.order, servicesBundle.telegram, repos.cache, repos.status, repos.user, repos.history, authPermissionService, repos.orderType, authMW, cfg, loggers.Main, appCtx)
+	runTelegramRouter(
+		e,
+		servicesBundle.user,
+		servicesBundle.order,
+		servicesBundle.telegram,
+		repos.cache,
+		repos.status,
+		repos.user,
+		repos.history,
+		repos.priority,
+		repos.department,
+		repos.otdel,
+		repos.branch,
+		repos.office,
+		repos.equipment,
+		authPermissionService,
+		repos.orderType,
+		authMW,
+		cfg,
+		loggers.Main,
+		appCtx,
+	)
 	runSyncRouter(api, dbConn, cfg, loggers)
 
 	secureGroup.GET("/dashboard", controllersBundle.dashboard.GetDashboardStats, authMW.AuthorizeAny(authz.DashboardView))

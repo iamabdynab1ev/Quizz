@@ -57,6 +57,7 @@ type OrderHistoryService struct {
 	officeRepo     historyOfficeLookup
 	statusRepo     historyStatusLookup
 	priorityRepo   historyPriorityLookup
+	serverBaseURL  string
 	logger         *zap.Logger
 }
 
@@ -69,6 +70,7 @@ func NewOrderHistoryService(
 	officeRepo repositories.OfficeRepositoryInterface,
 	statusRepo repositories.StatusRepositoryInterface,
 	priorityRepo repositories.PriorityRepositoryInterface,
+	serverBaseURL string,
 	logger *zap.Logger,
 ) OrderHistoryServiceInterface {
 	return &OrderHistoryService{
@@ -80,6 +82,7 @@ func NewOrderHistoryService(
 		officeRepo:     officeRepo,
 		statusRepo:     statusRepo,
 		priorityRepo:   priorityRepo,
+		serverBaseURL:  serverBaseURL,
 		logger:         logger,
 	}
 }
@@ -319,7 +322,7 @@ func (r *historyReferenceResolver) lineForEvent(block *dto.TimelineEventDTO, eve
 			block.Attachment = &dto.AttachmentResponseDTO{
 				ID:       event.Attachment.ID,
 				FileName: event.Attachment.FileName,
-				URL:      "/uploads/" + event.Attachment.FilePath,
+				URL:      utils.BuildUploadURL(r.service.serverBaseURL, event.Attachment.FilePath),
 			}
 		}
 		if newValue == "" {

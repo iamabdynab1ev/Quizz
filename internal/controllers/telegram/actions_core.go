@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
+	"sync"
 
 	"go.uber.org/zap"
 
@@ -290,21 +290,51 @@ func (c *TelegramController) handleCallbackQuery(ctx context.Context, query *Tel
 }
 
 func (c *TelegramController) sendEditMenu(ctx context.Context, chatID int64, messageID int, order *entities.Order) error {
-	status, err := c.statusRepo.FindStatus(ctx, order.StatusID)
-	if err != nil {
-		c.logger.Error("Не удалось получить статус", zap.Error(err))
-		return c.sendInternalError(ctx, chatID)
-	}
+	var (
+		status      *entities.Status
+		creator     *entities.User
+		executor    *entities.User
+		statusErr   error
+		creatorErr  error
+		executorErr error
+	)
 
-	creator, _ := c.userRepo.FindUserByID(ctx, order.CreatorID)
-	var executor *entities.User
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		status, statusErr = c.statusRepo.FindStatus(ctx, order.StatusID)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		creator, creatorErr = c.userRepo.FindUserByID(ctx, order.CreatorID)
+	}()
+
 	if order.ExecutorID != nil {
-		executor, _ = c.userRepo.FindUserByID(ctx, *order.ExecutorID)
+		wg.Add(1)
+		go func(executorID uint64) {
+			defer wg.Done()
+			executor, executorErr = c.userRepo.FindUserByID(ctx, executorID)
+		}(*order.ExecutorID)
 	}
 
 	user, userCtx, err := c.prepareUserContext(ctx, chatID)
 	if err != nil {
 		return c.handlePrepareUserContextError(ctx, chatID, err)
+	}
+
+	wg.Wait()
+	if statusErr != nil {
+		c.logger.Error("Не удалось получить статус", zap.Error(statusErr))
+		return c.sendInternalError(ctx, chatID)
+	}
+	if creatorErr != nil {
+		c.logger.Debug("telegram order card: creator lookup failed", zap.Uint64("creator_id", order.CreatorID), zap.Error(creatorErr))
+	}
+	if executorErr != nil && order.ExecutorID != nil {
+		c.logger.Debug("telegram order card: executor lookup failed", zap.Uint64("executor_id", *order.ExecutorID), zap.Error(executorErr))
 	}
 
 	perms, _ := utils.GetPermissionsMapFromCtx(userCtx)
@@ -322,41 +352,7 @@ func (c *TelegramController) sendEditMenu(ctx context.Context, chatID int64, mes
 	canEdit := canStatus || canDuration || canComment || canDelegate
 
 	var text strings.Builder
-	text.WriteString(fmt.Sprintf("📋 *Заявка №%d*\n\n", order.ID))
-	text.WriteString(fmt.Sprintf("📝 *Описание:*\n%s\n\n", telegram.EscapeTextForMarkdownV2(order.Name)))
-
-	statusEmoji := getStatusEmoji(status)
-	text.WriteString(fmt.Sprintf("%s *Статус:* %s\n", statusEmoji, telegram.EscapeTextForMarkdownV2(status.Name)))
-
-	if creator != nil {
-		text.WriteString(fmt.Sprintf("👤 *Создатель:* %s\n", telegram.EscapeTextForMarkdownV2(creator.Fio)))
-	}
-	if executor != nil {
-		text.WriteString(fmt.Sprintf("👨‍💼 *Исполнитель:* %s\n", telegram.EscapeTextForMarkdownV2(executor.Fio)))
-	} else {
-		text.WriteString("👨‍💼 *Исполнитель:* _не назначен_\n")
-	}
-
-	if order.Duration != nil {
-		durationStr := order.Duration.Format("02.01.2006 15:04")
-		if order.Duration.Before(time.Now()) {
-			text.WriteString(fmt.Sprintf("⏰ *Срок:* ~%s~ ⚠️ _просрочено_\n", telegram.EscapeTextForMarkdownV2(durationStr)))
-		} else {
-			text.WriteString(fmt.Sprintf("⏰ *Срок:* %s\n", telegram.EscapeTextForMarkdownV2(durationStr)))
-		}
-
-		history, historyErr := c.orderHistoryRepo.FindByOrderID(ctx, order.ID, 1, 0)
-		if historyErr == nil && len(history) > 0 {
-			for i := len(history) - 1; i >= 0; i-- {
-				if history[i].Comment.Valid && strings.TrimSpace(history[i].Comment.String) != "" {
-					text.WriteString(fmt.Sprintf("\n💬 *Последний комментарий:*\n_%s_\n", telegram.EscapeTextForMarkdownV2(history[i].Comment.String)))
-					break
-				}
-			}
-		}
-	} else {
-		text.WriteString("⏰ *Срок:* _не задан_\n")
-	}
+	text.WriteString(c.buildOrderCardText(ctx, order, status, creator, executor))
 
 	var keyboard [][]telegram.InlineKeyboardButton
 	isClosed := status.Code != nil && *status.Code == "CLOSED"

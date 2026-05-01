@@ -31,6 +31,7 @@ type StatusServiceInterface interface {
 
 type StatusService struct {
 	repo        repositories.StatusRepositoryInterface
+	cache       repositories.CacheRepositoryInterface
 	userRepo    repositories.UserRepositoryInterface
 	fileStorage filestorage.FileStorageInterface
 	logger      *zap.Logger
@@ -38,11 +39,12 @@ type StatusService struct {
 
 func NewStatusService(
 	repo repositories.StatusRepositoryInterface,
+	cache repositories.CacheRepositoryInterface,
 	userRepo repositories.UserRepositoryInterface,
 	fileStorage filestorage.FileStorageInterface,
 	logger *zap.Logger,
 ) StatusServiceInterface {
-	return &StatusService{repo: repo, userRepo: userRepo, fileStorage: fileStorage, logger: logger}
+	return &StatusService{repo: repo, cache: cache, userRepo: userRepo, fileStorage: fileStorage, logger: logger}
 }
 
 func statusEntityToDTO(entity *entities.Status) *dto.StatusDTO {
@@ -89,19 +91,28 @@ func (s *StatusService) GetStatuses(ctx context.Context, filter types.Filter) (*
 		return nil, apperrors.ErrForbidden
 	}
 
+	cachePayload := struct {
+		Filter types.Filter `json:"filter"`
+	}{Filter: filter}
+	if cached, ok := readVersionedListCache[dto.PaginatedResponse[dto.StatusDTO]](ctx, s.cache, "status:list", cachePayload); ok {
+		return &cached, nil
+	}
+
 	statuses, total, err := s.repo.GetStatuses(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
 
-	return &dto.PaginatedResponse[dto.StatusDTO]{
+	response := &dto.PaginatedResponse[dto.StatusDTO]{
 		List: statuses,
 		Pagination: dto.PaginationObject{
 			TotalCount: total,
 			Page:       uint64(filter.Page),
 			Limit:      uint64(filter.Limit),
 		},
-	}, nil
+	}
+	writeVersionedListCache(ctx, s.cache, "status:list", cachePayload, *response)
+	return response, nil
 }
 
 func (s *StatusService) FindStatus(ctx context.Context, id uint64) (*dto.StatusDTO, error) {
@@ -186,7 +197,11 @@ func (s *StatusService) CreateStatus(
 		bigIconPath = urlPrefix + path
 	}
 
-	return s.repo.CreateStatus(ctx, createDTO, smallIconPath, bigIconPath)
+	created, err := s.repo.CreateStatus(ctx, createDTO, smallIconPath, bigIconPath)
+	if err == nil {
+		invalidateVersionedListCache(ctx, s.cache, "status:list")
+	}
+	return created, err
 }
 
 func (s *StatusService) UpdateStatus(ctx context.Context, id uint64, updateDTO dto.UpdateStatusDTO, iconSmallHeader, iconBigHeader *multipart.FileHeader) (*dto.StatusDTO, error) {
@@ -234,7 +249,11 @@ func (s *StatusService) UpdateStatus(ctx context.Context, id uint64, updateDTO d
 		fullPath := urlPrefix + path
 		bigIconPath = &fullPath
 	}
-	return s.repo.UpdateStatus(ctx, id, updateDTO, smallIconPath, bigIconPath)
+	updated, err := s.repo.UpdateStatus(ctx, id, updateDTO, smallIconPath, bigIconPath)
+	if err == nil {
+		invalidateVersionedListCache(ctx, s.cache, "status:list")
+	}
+	return updated, err
 }
 
 func (s *StatusService) DeleteStatus(ctx context.Context, id uint64) error {
@@ -245,5 +264,9 @@ func (s *StatusService) DeleteStatus(ctx context.Context, id uint64) error {
 	if !authz.CanDo(authz.StatusesDelete, *authContext) {
 		return apperrors.ErrForbidden
 	}
-	return s.repo.DeleteStatus(ctx, id)
+	if err := s.repo.DeleteStatus(ctx, id); err != nil {
+		return err
+	}
+	invalidateVersionedListCache(ctx, s.cache, "status:list")
+	return nil
 }

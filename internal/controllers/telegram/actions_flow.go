@@ -8,7 +8,6 @@ import (
 
 	"request-system/internal/dto"
 	tgapi "request-system/pkg/telegram"
-	"request-system/pkg/types"
 	"request-system/pkg/utils"
 
 	"go.uber.org/zap"
@@ -203,57 +202,31 @@ func (c *TelegramController) handleDelegateStart(ctx context.Context, chatID int
 	}
 
 	const maxDelegateCandidates = 9
-	filter := types.Filter{
-		Filter:         make(map[string]interface{}),
-		Limit:          maxDelegateCandidates,
-		Page:           1,
-		Offset:         0,
-		WithPagination: true,
-	}
-	text := ""
-	switch {
-	case user.OtdelID != nil:
-		filter.Filter["otdel_id"] = *user.OtdelID
-		text = "👤 *Коллеги вашего отдела:*"
-	case user.DepartmentID != nil:
-		filter.Filter["department_id"] = *user.DepartmentID
-		text = "👤 *Коллеги вашего департамента:*"
-	case user.OfficeID != nil:
-		filter.Filter["office_id"] = *user.OfficeID
-		text = "👤 *Сотрудники вашего офиса:*"
-	case user.BranchID != nil:
-		filter.Filter["branch_id"] = *user.BranchID
-		text = "👤 *Сотрудники вашего филиала:*"
-	default:
-		text = "👤 *Все сотрудники:*"
-	}
+	scope := c.buildExecutorScopeForOrder(order)
+	filter := buildExecutorSearchFilter(scope, "", maxDelegateCandidates)
+	text := scope.title
 
-	users, totalUsers, err := c.userRepo.GetUsers(userCtx, filter)
-	showSearch := err != nil || totalUsers == 0
+	candidates, err := c.listExecutorCandidates(userCtx, filter)
+	if err != nil {
+		return c.sendInternalError(ctx, chatID)
+	}
 
 	var rows [][]tgapi.InlineKeyboardButton
 	addedCount := 0
-	if !showSearch {
-		const maxButtons = 8
-		for _, candidate := range users {
-			if candidate.ID == user.ID {
-				continue
-			}
-			if order.ExecutorID != nil && candidate.ID == *order.ExecutorID {
-				continue
-			}
-			if addedCount >= maxButtons {
-				showSearch = true
-				break
-			}
+	const maxButtons = 8
+	for _, candidate := range candidates {
+		if candidate.ID == user.ID {
+			continue
+		}
+		if order.ExecutorID != nil && candidate.ID == *order.ExecutorID {
+			continue
+		}
+		if addedCount >= maxButtons {
+			break
+		}
 
-			cb := fmt.Sprintf(`{"action":"set_executor","user_id":%d}`, candidate.ID)
-			rows = append(rows, []tgapi.InlineKeyboardButton{{Text: candidate.Fio, CallbackData: cb}})
-			addedCount++
-		}
-		if totalUsers > uint64(addedCount) {
-			showSearch = true
-		}
+		rows = append(rows, []tgapi.InlineKeyboardButton{{Text: candidate.Fio, CallbackData: buildExecutorCallback(candidate.ID)}})
+		addedCount++
 	}
 
 	state.Mode = "awaiting_executor"
@@ -263,13 +236,9 @@ func (c *TelegramController) handleDelegateStart(ctx context.Context, chatID int
 
 	if addedCount == 0 {
 		return c.renderExecutorSelection(ctx, chatID, state,
-			"В вашем подразделении больше никого нет\\.\n\nВведите ФИО сотрудника для поиска:",
+			scope.emptyText,
 			nil,
 		)
-	}
-
-	if showSearch {
-		text += "\n_Показаны не все, можно уточнить сотрудника текстом_"
 	}
 
 	return c.renderExecutorSelection(ctx, chatID, state, text, rows)
@@ -291,27 +260,21 @@ func (c *TelegramController) handleSetExecutorFromText(ctx context.Context, chat
 		return c.handlePrepareUserContextError(ctx, chatID, err)
 	}
 
-	filterMap := map[string]interface{}{}
-	switch {
-	case user.OtdelID != nil:
-		filterMap["otdel_id"] = *user.OtdelID
-	case user.DepartmentID != nil:
-		filterMap["department_id"] = *user.DepartmentID
-	case user.OfficeID != nil:
-		filterMap["office_id"] = *user.OfficeID
-	case user.BranchID != nil:
-		filterMap["branch_id"] = *user.BranchID
+	order, err := c.orderService.FindOrderByIDForTelegram(userCtx, user.ID, state.OrderID)
+	if err != nil {
+		return c.renderStateScreen(
+			ctx,
+			chatID,
+			state,
+			"❌ Ошибка: заявка не найдена\\.",
+			tgapi.WithKeyboard(c.orderBackKeyboard(state.OrderID)),
+			tgapi.WithMarkdownV2(),
+		)
 	}
 
-	users, _, err := c.userRepo.GetUsers(userCtx, types.Filter{
-		Search:         text,
-		Filter:         filterMap,
-		Limit:          10,
-		Page:           1,
-		Offset:         0,
-		WithPagination: true,
-	})
-	if err != nil || len(users) == 0 {
+	scope := c.buildExecutorScopeForOrder(order)
+	candidates, err := c.listExecutorCandidates(userCtx, buildExecutorSearchFilter(scope, text, 10))
+	if err != nil || len(candidates) == 0 {
 		return c.renderExecutorSelection(
 			ctx,
 			chatID,
@@ -321,22 +284,21 @@ func (c *TelegramController) handleSetExecutorFromText(ctx context.Context, chat
 		)
 	}
 
-	if len(users) > 1 {
+	if len(candidates) > 1 {
 		var rows [][]tgapi.InlineKeyboardButton
-		for _, candidate := range users {
-			cb := fmt.Sprintf(`{"action":"set_executor","user_id":%d}`, candidate.ID)
-			rows = append(rows, []tgapi.InlineKeyboardButton{{Text: candidate.Fio, CallbackData: cb}})
+		for _, candidate := range candidates {
+			rows = append(rows, []tgapi.InlineKeyboardButton{{Text: candidate.Fio, CallbackData: buildExecutorCallback(candidate.ID)}})
 		}
 		return c.renderExecutorSelection(
 			ctx,
 			chatID,
 			state,
-			fmt.Sprintf("Найдено %d сотрудников\\. Выберите нужного:", len(users)),
+			fmt.Sprintf("Найдено %d сотрудников\\. Выберите нужного:", len(candidates)),
 			rows,
 		)
 	}
 
-	return c.handleSetSomething(ctx, chatID, "executor_id", users[0].ID, "Исполнитель назначен")
+	return c.handleSetSomething(ctx, chatID, "executor_id", candidates[0].ID, "Исполнитель назначен")
 }
 
 func (c *TelegramController) handleSetSomething(ctx context.Context, chatID int64, key string, value interface{}, popupText string) error {

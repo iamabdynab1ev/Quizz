@@ -45,6 +45,7 @@ go test ./...
 
 ## Main Environment Variables
 
+- `APP_NAME`
 - `DATABASE_URL`
 - `REDIS_ADDRESS`
 - `JWT_SECRET_KEY`
@@ -85,7 +86,11 @@ go test ./...
 
 ## API Documentation
 
-- `docs/API.md` - practical map of current HTTP endpoints and integration entrypoints.
+- `docs/FRONTEND_API.md` - frontend-facing API contract, auth rules, filters, pagination, and endpoint map.
+- `docs/BACKEND_CURRENT_STATE.md` - current backend implementation, architecture, domains, integrations, and tradeoffs.
+- `docs/PROJECT_SETUP.md` - configuration, environment variables, database/Redis/TLS connections, and deployment setup.
+- `docs/BACKEND_ARCHITECTURE.md` - deeper backend architecture reference if you want the design-level breakdown.
+- `docs/API.md` - short practical overview of the current HTTP endpoints and integration entrypoints.
 - `docs/loadtest-checklist.md` - commands for dashboard, order list, and history load checks.
 - `docs/deployment-checklist.md` - safe backend rollout, smoke checks, and rollback steps.
 

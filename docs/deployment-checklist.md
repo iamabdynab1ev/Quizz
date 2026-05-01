@@ -20,6 +20,7 @@ go test ./...
 - Confirm required environment variables exist on the server:
 
 ```text
+APP_NAME
 DATABASE_URL
 REDIS_ADDRESS
 JWT_SECRET_KEY

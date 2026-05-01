@@ -1,5 +1,8 @@
 # API Overview
 
+This is a short practical map of the HTTP API.
+For the current frontend contract, request/response details, filters and pagination, see [FRONTEND_API.md](./FRONTEND_API.md).
+
 This document is a practical map of the current backend API. It is not a full
 OpenAPI contract yet, but it gives one place to check the main endpoints,
 authentication model, and integration entrypoints.
@@ -54,6 +57,7 @@ authentication model, and integration entrypoints.
 
 - `GET /api/dashboard` - dashboard statistics by period and scope.
 - `GET /api/report` - report data.
+- `GET /api/main` - department summary / main stats view used by the UI.
 
 Dashboard business rules:
 
@@ -107,18 +111,18 @@ Notes:
 
 The following dictionaries follow the standard CRUD shape:
 
-- Branches: `/api/branches`
-- Departments: `/api/departments`
-- Otdels: `/api/otdels`
-- Offices: `/api/offices`
-- Positions: `/api/positions`
-- Priorities: `/api/priorities`
-- Statuses: `/api/statuses`
-- Roles: `/api/roles`
-- Permissions: `/api/permissions`
-- Role permissions: `/api/role-permissions`
-- Order types: `/api/order-types`
-- Order routing rules: `/api/order-routing-rules`
+- Branches: `/api/branch`
+- Departments: `/api/department`
+- Otdels: `/api/otdel`
+- Offices: `/api/office`
+- Positions: `/api/position`
+- Priorities: `/api/priority`
+- Statuses: `/api/status`
+- Roles: `/api/role`
+- Permissions: `/api/permission`
+- Role permissions: `/api/role_permission`
+- Order types: `/api/order_type`
+- Order routing rules: `/api/order_rule`
 
 Standard CRUD shape:
 
@@ -127,6 +131,11 @@ Standard CRUD shape:
 - `GET <base>/:id` - get by ID.
 - `PUT <base>/:id` - update.
 - `DELETE <base>/:id` - delete.
+
+Extra endpoints:
+
+- `GET /api/position/types` - position type lookup.
+- `GET /api/order_type/:id/config` - order type config for the request form.
 
 ## WebSocket
 

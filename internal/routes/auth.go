@@ -39,7 +39,7 @@ func runAuthRouter(
 
 	// 2. Включаем реализацию через Telegram
 	tgService := telegram.NewService(cfg.Telegram.BotToken)
-	notificationService := services.NewTelegramNotificationService(tgService, logger)
+	notificationService := services.NewTelegramNotificationService(tgService, cacheRepository, logger)
 	txManager := repositories.NewTxManager(dbConn, logger)
 
 	authService := services.NewAuthService(

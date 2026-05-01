@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -138,6 +140,8 @@ var prefixConstraintSpecs = map[string]dbConstraintSpec{
 	"statuses_code":      {statusCode: http.StatusBadRequest, message: "Статус с таким кодом уже существует."},
 }
 
+var varcharLimitPattern = regexp.MustCompile(`(?i)(?:character varying|varchar)\((\d+)\)`)
+
 func IsNotFound(err error) bool {
 	e, ok := err.(*HttpError)
 	return ok && e.Code == http.StatusNotFound
@@ -180,7 +184,7 @@ func mapPostgresError(pgErr *pgconn.PgError, original error) error {
 	case sqlStateNotNullViolation:
 		return newDBHttpError(dbConstraintSpec{statusCode: http.StatusBadRequest, message: "Не заполнено обязательное поле."}, original)
 	case sqlStateStringDataRightTruncation:
-		return newDBHttpError(dbConstraintSpec{statusCode: http.StatusBadRequest, message: "Одно из полей содержит слишком длинное значение."}, original)
+		return newDBHttpError(dbConstraintSpec{statusCode: http.StatusBadRequest, message: buildStringTooLongMessage(pgErr.Message)}, original)
 	case sqlStateForeignKeyViolation:
 		return newDBHttpError(dbConstraintSpec{statusCode: http.StatusBadRequest, message: "Один из выбранных элементов был удалён. Обновите страницу."}, original)
 	case sqlStateUniqueViolation:
@@ -220,12 +224,34 @@ func mapDBErrorByText(err error) error {
 	case strings.Contains(errMsg, "null value in column") || strings.Contains(errMsg, sqlStateNotNullViolation):
 		return NewHttpError(http.StatusBadRequest, "Не заполнено обязательное поле.", err, nil)
 	case strings.Contains(errMsg, "value too long") || strings.Contains(errMsg, sqlStateStringDataRightTruncation):
-		return NewHttpError(http.StatusBadRequest, "Одно из полей содержит слишком длинное значение.", err, nil)
+		return NewHttpError(http.StatusBadRequest, buildStringTooLongMessage(err.Error()), err, nil)
 	case strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "no connection"):
 		return NewHttpError(http.StatusInternalServerError, "Ошибка соединения с базой данных. Попробуйте позже.", err, nil)
 	default:
 		return nil
 	}
+}
+
+func buildStringTooLongMessage(raw string) string {
+	if maxLen, ok := extractVarcharLimit(raw); ok {
+		return fmt.Sprintf("Значение превышает допустимую длину поля. Максимум: %d символов.", maxLen)
+	}
+
+	return "Одно из полей содержит слишком длинное значение."
+}
+
+func extractVarcharLimit(raw string) (int, bool) {
+	match := varcharLimitPattern.FindStringSubmatch(raw)
+	if len(match) < 2 {
+		return 0, false
+	}
+
+	maxLen, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, false
+	}
+
+	return maxLen, true
 }
 
 func newDBHttpError(spec dbConstraintSpec, err error) *HttpError {

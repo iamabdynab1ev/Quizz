@@ -17,6 +17,7 @@ import (
 	"request-system/internal/repositories"
 
 	ldap "github.com/go-ldap/ldap/v3"
+	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
@@ -32,6 +33,9 @@ var emailRegex = regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$`
 
 type AuthServiceInterface interface {
 	Login(ctx context.Context, payload dto.LoginDTO) (*entities.User, error)
+	RegisterRefreshSession(ctx context.Context, userID uint64, sessionID string, ttl time.Duration) error
+	ValidateRefreshSession(ctx context.Context, userID uint64, sessionID string) error
+	InvalidateRefreshSession(ctx context.Context, sessionID string) error
 	// Метод для получения своего профиля (/auth/me)
 	GetUserByID(ctx context.Context, userID uint64) (*dto.UserProfileDTO, error)
 	RequestPasswordReset(ctx context.Context, payload dto.ResetPasswordRequestDTO) error
@@ -79,6 +83,46 @@ func NewAuthService(
 	}
 }
 
+func (s *AuthService) sessionKey(sessionID string) string {
+	return fmt.Sprintf(constants.CacheKeyRefreshSession, strings.TrimSpace(sessionID))
+}
+
+func (s *AuthService) RegisterRefreshSession(ctx context.Context, userID uint64, sessionID string, ttl time.Duration) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return apperrors.ErrInvalidToken
+	}
+
+	return s.cacheRepo.Set(ctx, s.sessionKey(sessionID), strconv.FormatUint(userID, 10), ttl)
+}
+
+func (s *AuthService) ValidateRefreshSession(ctx context.Context, userID uint64, sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return apperrors.ErrInvalidToken
+	}
+
+	storedUserID, err := s.cacheRepo.Get(ctx, s.sessionKey(sessionID))
+	if err != nil {
+		return apperrors.ErrInvalidToken
+	}
+
+	parsedUserID, err := strconv.ParseUint(strings.TrimSpace(storedUserID), 10, 64)
+	if err != nil || parsedUserID != userID {
+		return apperrors.ErrInvalidToken
+	}
+
+	return nil
+}
+
+func (s *AuthService) InvalidateRefreshSession(ctx context.Context, sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	return s.cacheRepo.Del(ctx, s.sessionKey(sessionID))
+}
+
 // ... метод authenticateInAD остается без изменений ...
 func (s *AuthService) authenticateInAD(username, password string) error {
 	dialer := &net.Dialer{Timeout: s.ldapCfg.Timeout}
@@ -114,8 +158,14 @@ func isInvalidCredentialsError(err error) bool {
 
 // ... Login остается без изменений ...
 func (s *AuthService) Login(ctx context.Context, payload dto.LoginDTO) (*entities.User, error) {
-	loginInput := strings.ToLower(payload.Login)
-	systemRootEmail := strings.ToLower(s.cfg.SystemRootLogin)
+	loginInput := normalizeLoginIdentifier(payload.Login)
+	systemRootEmail := normalizeLoginIdentifier(s.cfg.SystemRootLogin)
+
+	if locked, err := s.isLoginLocked(ctx, loginInput, nil); err != nil {
+		s.logger.Warn("Не удалось проверить состояние блокировки логина", zap.String("login", loginInput), zap.Error(err))
+	} else if locked {
+		return nil, apperrors.ErrAccountLocked
+	}
 
 	user, err := s.userRepo.FindUserByEmailOrLogin(ctx, loginInput)
 	if err != nil {
@@ -123,6 +173,9 @@ func (s *AuthService) Login(ctx context.Context, payload dto.LoginDTO) (*entitie
 			zap.String("login", loginInput),
 			zap.Error(err),
 		)
+		if s.recordFailedLogin(ctx, loginInput, nil) {
+			return nil, apperrors.ErrAccountLocked
+		}
 		return nil, apperrors.ErrInvalidCredentials
 	}
 
@@ -131,16 +184,22 @@ func (s *AuthService) Login(ctx context.Context, payload dto.LoginDTO) (*entitie
 		return nil, apperrors.ErrUserDisabled
 	}
 
+	if locked, err := s.isLoginLocked(ctx, loginInput, user); err != nil {
+		s.logger.Warn("Не удалось проверить lockout пользователя", zap.String("login", loginInput), zap.Uint64("user_id", user.ID), zap.Error(err))
+	} else if locked {
+		return nil, apperrors.ErrAccountLocked
+	}
+
 	authenticated := false
-	if systemRootEmail != "" && (loginInput == systemRootEmail || user.Email == systemRootEmail) {
+	if systemRootEmail != "" && (loginInput == systemRootEmail || normalizeLoginIdentifier(user.Email) == systemRootEmail) {
 		if err := utils.ComparePasswords(user.Password, payload.Password); err == nil {
 			authenticated = true
 		}
 	} else {
 		if s.ldapCfg.Enabled {
 			adUsername := loginInput
-			if user.Username != nil && *user.Username != "" {
-				adUsername = *user.Username
+			if user.Username != nil && strings.TrimSpace(*user.Username) != "" {
+				adUsername = normalizeLoginIdentifier(*user.Username)
 			}
 			if err := s.authenticateInAD(adUsername, payload.Password); err == nil {
 				authenticated = true
@@ -157,8 +216,13 @@ func (s *AuthService) Login(ctx context.Context, payload dto.LoginDTO) (*entitie
 
 	if !authenticated {
 		s.logger.Warn("Неверный пароль или ошибка LDAP при входе", zap.String("login", loginInput))
+		if s.recordFailedLogin(ctx, loginInput, user) {
+			return nil, apperrors.ErrAccountLocked
+		}
 		return nil, apperrors.ErrInvalidCredentials
 	}
+
+	s.clearLoginProtection(ctx, loginInput, user)
 
 	if user.MustChangePassword {
 		resetToken := uuid.New().String()
@@ -169,6 +233,161 @@ func (s *AuthService) Login(ctx context.Context, payload dto.LoginDTO) (*entitie
 	}
 
 	return user, nil
+}
+
+type loginProtectionScope struct {
+	attemptKeys []string
+	lockoutKeys []string
+}
+
+func (s *AuthService) isLoginLocked(ctx context.Context, login string, user *entities.User) (bool, error) {
+	scope := buildLoginProtectionScope(login, user)
+
+	for _, key := range scope.lockoutKeys {
+		locked, err := s.cacheRepo.Get(ctx, key)
+		if err != nil {
+			if err != redis.Nil {
+				return false, err
+			}
+			continue
+		}
+		if strings.TrimSpace(locked) != "" {
+			return true, nil
+		}
+	}
+
+	for _, key := range scope.attemptKeys {
+		countStr, err := s.cacheRepo.Get(ctx, key)
+		if err != nil {
+			if err != redis.Nil {
+				return false, err
+			}
+			continue
+		}
+
+		attempts, err := strconv.ParseInt(strings.TrimSpace(countStr), 10, 64)
+		if err != nil {
+			continue
+		}
+
+		if attempts >= int64(s.cfg.MaxLoginAttempts) {
+			if err := s.lockLogin(ctx, scope); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (s *AuthService) recordFailedLogin(ctx context.Context, login string, user *entities.User) bool {
+	scope := buildLoginProtectionScope(login, user)
+	shouldLock := false
+
+	for _, key := range scope.attemptKeys {
+		attempts, err := s.cacheRepo.Incr(ctx, key)
+		if err != nil {
+			s.logger.Warn("Не удалось увеличить счётчик неудачных попыток входа", zap.String("key", key), zap.Error(err))
+			continue
+		}
+
+		if attempts == 1 {
+			if _, err := s.cacheRepo.Expire(ctx, key, s.cfg.LockoutDuration); err != nil {
+				s.logger.Warn("Не удалось установить TTL для счётчика попыток входа", zap.String("key", key), zap.Error(err))
+			}
+		}
+
+		if attempts >= int64(s.cfg.MaxLoginAttempts) {
+			shouldLock = true
+		}
+	}
+
+	if shouldLock {
+		if err := s.lockLogin(ctx, scope); err != nil {
+			s.logger.Warn("Не удалось установить lockout для аккаунта", zap.String("login", login), zap.Error(err))
+		}
+		return true
+	}
+
+	return false
+}
+
+func (s *AuthService) clearLoginProtection(ctx context.Context, login string, user *entities.User) {
+	scope := buildLoginProtectionScope(login, user)
+	keys := make([]string, 0, len(scope.attemptKeys)+len(scope.lockoutKeys))
+	keys = append(keys, scope.attemptKeys...)
+	keys = append(keys, scope.lockoutKeys...)
+	for _, alias := range loginAliases(login, user) {
+		keys = append(keys, fmt.Sprintf(constants.CacheKeyLoginAttemptsByLogin, alias))
+		keys = append(keys, fmt.Sprintf(constants.CacheKeyLockoutByLogin, alias))
+	}
+
+	if len(keys) == 0 {
+		return
+	}
+
+	if err := s.cacheRepo.Del(ctx, keys...); err != nil {
+		s.logger.Warn("Не удалось очистить lockout-состояние логина", zap.String("login", login), zap.Error(err))
+	}
+}
+
+func (s *AuthService) lockLogin(ctx context.Context, scope loginProtectionScope) error {
+	for _, key := range scope.lockoutKeys {
+		if err := s.cacheRepo.Set(ctx, key, "locked", s.cfg.LockoutDuration); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func buildLoginProtectionScope(login string, user *entities.User) loginProtectionScope {
+	scope := loginProtectionScope{}
+
+	login = normalizeLoginIdentifier(login)
+	if login != "" {
+		scope.attemptKeys = append(scope.attemptKeys, fmt.Sprintf(constants.CacheKeyLoginAttemptsByLogin, login))
+		scope.lockoutKeys = append(scope.lockoutKeys, fmt.Sprintf(constants.CacheKeyLockoutByLogin, login))
+	}
+
+	if user != nil {
+		scope.attemptKeys = append(scope.attemptKeys, fmt.Sprintf(constants.CacheKeyLoginAttempts, user.ID))
+		scope.lockoutKeys = append(scope.lockoutKeys, fmt.Sprintf(constants.CacheKeyLockout, user.ID))
+	}
+
+	return scope
+}
+
+func normalizeLoginIdentifier(login string) string {
+	return strings.ToLower(strings.TrimSpace(login))
+}
+
+func loginAliases(login string, user *entities.User) []string {
+	seen := map[string]struct{}{}
+	add := func(value string) {
+		value = normalizeLoginIdentifier(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+	}
+
+	add(login)
+	if user != nil {
+		add(user.Email)
+		if user.Username != nil {
+			add(*user.Username)
+		}
+	}
+
+	aliases := make([]string, 0, len(seen))
+	for alias := range seen {
+		aliases = append(aliases, alias)
+	}
+	return aliases
 }
 
 // === ОБНОВЛЕННЫЙ МЕТОД GetUserByID ДЛЯ /auth/me ===

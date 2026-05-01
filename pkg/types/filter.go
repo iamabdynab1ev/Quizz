@@ -5,6 +5,7 @@ import "time"
 // Filter represents query parameters for filtering and pagination.
 type Filter struct {
 	Search             string                 `json:"search,omitempty"`
+	Fields             []string               `json:"fields,omitempty"`
 	Sort               map[string]string      `json:"sort,omitempty"`
 	Filter             map[string]interface{} `json:"filter,omitempty"`
 	Limit              int                    `json:"limit,omitempty"`

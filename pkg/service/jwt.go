@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	apperrors "request-system/pkg/errors"
@@ -13,14 +14,15 @@ import (
 type JwtCustomClaim struct {
 	UserID         uint64 `json:"userID"`
 	RoleID         uint64 `json:"roleID,omitempty"` // roleID может быть 0, поэтому omitempty
+	SessionID      string `json:"sessionID,omitempty"`
 	IsRefreshToken bool
 	jwt.RegisteredClaims
 }
 
 type JWTService interface {
-	GenerateTokens(userID uint64, roleID uint64, accessTokenTTL, refreshTokenTTL time.Duration) (string, string, error)
+	GenerateTokens(userID uint64, roleID uint64, sessionID string, accessTokenTTL, refreshTokenTTL time.Duration) (string, string, error)
 	ValidateToken(tokenString string) (*JwtCustomClaim, error)
-	ValidateRefreshToken(tokenString string) (uint64, error)
+	ValidateRefreshToken(tokenString string) (uint64, string, error)
 	GetAccessTokenTTL() time.Duration
 	GetRefreshTokenTTL() time.Duration
 }
@@ -41,7 +43,7 @@ func NewJWTService(secretKey string, accessTokenExp, refreshTokenExp time.Durati
 	}
 }
 
-func (s *jwtService) GenerateTokens(userID uint64, roleID uint64, accessTokenTTL, refreshTokenTTL time.Duration) (string, string, error) {
+func (s *jwtService) GenerateTokens(userID uint64, roleID uint64, sessionID string, accessTokenTTL, refreshTokenTTL time.Duration) (string, string, error) {
 	accessTokenExp := time.Now().UTC().Add(accessTokenTTL)
 	refreshTokenExp := time.Now().UTC().Add(refreshTokenTTL)
 	issuedAt := time.Now().UTC()
@@ -49,20 +51,24 @@ func (s *jwtService) GenerateTokens(userID uint64, roleID uint64, accessTokenTTL
 	accessTokenClaims := &JwtCustomClaim{
 		UserID:         userID,
 		RoleID:         roleID, // roleID может быть 0, это нормально
+		SessionID:      sessionID,
 		IsRefreshToken: false,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(accessTokenExp),
 			IssuedAt:  jwt.NewNumericDate(issuedAt),
+			ID:        sessionID,
 		},
 	}
 
 	refreshTokenClaims := &JwtCustomClaim{
 		UserID:         userID,
 		RoleID:         roleID, // roleID может быть 0
+		SessionID:      sessionID,
 		IsRefreshToken: true,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(refreshTokenExp),
 			IssuedAt:  jwt.NewNumericDate(issuedAt),
+			ID:        sessionID,
 		},
 	}
 
@@ -110,16 +116,23 @@ func (s *jwtService) ValidateToken(tokenString string) (*JwtCustomClaim, error) 
 	return nil, apperrors.ErrInvalidToken
 }
 
-func (s *jwtService) ValidateRefreshToken(tokenString string) (uint64, error) {
+func (s *jwtService) ValidateRefreshToken(tokenString string) (uint64, string, error) {
 	claims, err := s.ValidateToken(tokenString)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	if !claims.IsRefreshToken {
 		s.logger.Warn("Попытка использовать access токен для обновления", zap.Uint64("userID", claims.UserID))
-		return 0, apperrors.ErrInvalidToken
+		return 0, "", apperrors.ErrInvalidToken
 	}
-	return claims.UserID, nil
+	if strings.TrimSpace(claims.SessionID) == "" && strings.TrimSpace(claims.RegisteredClaims.ID) != "" {
+		claims.SessionID = claims.RegisteredClaims.ID
+	}
+	if strings.TrimSpace(claims.SessionID) == "" {
+		s.logger.Warn("Refresh токен не содержит идентификатор сессии", zap.Uint64("userID", claims.UserID))
+		return 0, "", apperrors.ErrInvalidToken
+	}
+	return claims.UserID, claims.SessionID, nil
 }
 
 func (s *jwtService) GetAccessTokenTTL() time.Duration {

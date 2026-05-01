@@ -24,6 +24,7 @@ type routeRepositories struct {
 	rolePermission repositories.RolePermissionRepositoryInterface
 	order          repositories.OrderRepositoryInterface
 	priority       repositories.PriorityRepositoryInterface
+	equipment      repositories.EquipmentRepositoryInterface
 	attachment     repositories.AttachmentRepositoryInterface
 	history        repositories.OrderHistoryRepositoryInterface
 	position       repositories.PositionRepositoryInterface
@@ -76,6 +77,7 @@ func buildRouteRepositories(
 		rolePermission: repositories.NewRolePermissionRepository(dbConn),
 		order:          repositories.NewOrderRepository(dbConn, loggers.Order),
 		priority:       repositories.NewPriorityRepository(dbConn, loggers.Main),
+		equipment:      repositories.NewEquipmentRepository(dbConn, loggers.Main),
 		attachment:     repositories.NewAttachmentRepository(dbConn),
 		history:        repositories.NewOrderHistoryRepository(dbConn, loggers.OrderHistory),
 		position:       repositories.NewPositionRepository(dbConn, loggers.Main),
@@ -101,12 +103,12 @@ func buildRouteServices(
 ) *routeServices {
 	ruleEngineService := services.NewRuleEngineService(repos.rule, repos.user, loggers.Main)
 	tgService := telegram.NewService(cfg.Telegram.BotToken)
-	notificationService := services.NewTelegramNotificationService(tgService, loggers.Main)
+	notificationService := services.NewTelegramNotificationService(tgService, repos.cache, loggers.Main)
 	_ = services.NewReportService(repos.report, repos.user, loggers.Main)
 
 	return &routeServices{
 		role:           services.NewRoleService(repos.role, repos.user, repos.status, authPermissionService, loggers.Main),
-		permission:     services.NewPermissionService(repos.permission, repos.user, loggers.Main),
+		permission:     services.NewPermissionService(repos.permission, repos.cache, repos.user, loggers.Main),
 		rolePermission: services.NewRolePermissionService(repos.rolePermission, repos.user, authPermissionService, loggers.Main),
 		orderType:      services.NewOrderTypeService(repos.orderType, repos.user, txManager, ruleEngineService, loggers.Main),
 		position:       services.NewPositionService(repos.position, repos.user, txManager, loggers.Main),
@@ -127,6 +129,7 @@ func buildRouteServices(
 			fileStorage,
 			bus,
 			loggers.Order,
+			cfg.Server.BaseURL,
 			repos.orderType,
 			authPermissionService,
 			notificationService,
@@ -141,6 +144,7 @@ func buildRouteServices(
 			repos.office,
 			repos.status,
 			repos.priority,
+			cfg.Server.BaseURL,
 			loggers.OrderHistory,
 		),
 		branch:    services.NewBranchService(txManager, repos.branch, repos.user, loggers.Main),

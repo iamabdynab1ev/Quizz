@@ -11,6 +11,7 @@ import (
 )
 
 type Config struct {
+	AppName      string
 	Server       ServerConfig
 	Postgres     PostgresConfig
 	Redis        RedisConfig
@@ -111,6 +112,7 @@ func New() *Config {
 	}
 
 	cfg := &Config{
+		AppName: getEnvNormalized("APP_NAME", "QUIZ"),
 		Server: ServerConfig{
 			Port:           getEnv("SERVER_PORT", "8091"),
 			BaseURL:        getEnvNormalized("SERVER_BASE_URL", "https://localhost:8091"),
@@ -132,11 +134,11 @@ func New() *Config {
 			RefreshTokenTTL: time.Hour * 24 * 30,
 		},
 		Auth: AuthConfig{
-			MaxResetAttempts:    5,
-			MaxLoginAttempts:    5,
-			LockoutDuration:     15 * time.Minute,
-			ResetTokenTTL:       15 * time.Minute,
-			VerificationCodeTTL: 15 * time.Minute,
+			MaxResetAttempts:    getEnvAsInt("AUTH_MAX_RESET_ATTEMPTS", 5),
+			MaxLoginAttempts:    getEnvAsInt("AUTH_MAX_LOGIN_ATTEMPTS", 5),
+			LockoutDuration:     getEnvAsDuration("AUTH_LOCKOUT_DURATION", 15*time.Minute),
+			ResetTokenTTL:       getEnvAsDuration("AUTH_RESET_TOKEN_TTL", 15*time.Minute),
+			VerificationCodeTTL: getEnvAsDuration("AUTH_VERIFICATION_CODE_TTL", 15*time.Minute),
 			SystemRootLogin:     strings.ToLower(getEnv("SEED_ADMIN_EMAIL", "admin@local")),
 		},
 		Seeder: SeederConfig{
@@ -220,6 +222,19 @@ func getEnvAsInt(key string, fallback int) int {
 		return fallback
 	}
 	val, err := strconv.Atoi(valStr)
+	if err != nil {
+		return fallback
+	}
+	return val
+}
+
+func getEnvAsDuration(key string, fallback time.Duration) time.Duration {
+	valStr := getEnv(key, "")
+	if valStr == "" {
+		return fallback
+	}
+
+	val, err := time.ParseDuration(valStr)
 	if err != nil {
 		return fallback
 	}

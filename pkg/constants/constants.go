@@ -63,4 +63,14 @@ const (
 	// Ключ для подсчета неудачных попыток входа.
 	// Формат: login_attempts:<userID> -> count
 	CacheKeyLoginAttempts = "login_attempts:%d"
+
+	// Ключи для lockout / attempts по строковому логину.
+	// Формат: lockout:login:<login> -> "locked"
+	CacheKeyLockoutByLogin = "lockout:login:%s"
+	// Формат: login_attempts:login:<login> -> count
+	CacheKeyLoginAttemptsByLogin = "login_attempts:login:%s"
+
+	// Refresh session registry.
+	// Формат: auth:refresh_session:<sessionID> -> userID
+	CacheKeyRefreshSession = "auth:refresh_session:%s"
 )

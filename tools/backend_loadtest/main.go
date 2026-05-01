@@ -19,6 +19,7 @@ import (
 
 	"request-system/pkg/service"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 )
@@ -247,7 +248,7 @@ func loadGeneratedTokens(userIDsRaw, userIDsFile string) ([]string, error) {
 	jwtSvc := service.NewJWTService(secretKey, 24*time.Hour, 30*24*time.Hour, zap.NewNop())
 	tokens := make([]string, 0, len(userIDs))
 	for _, userID := range userIDs {
-		accessToken, _, err := jwtSvc.GenerateTokens(userID, 0, jwtSvc.GetAccessTokenTTL(), jwtSvc.GetRefreshTokenTTL())
+		accessToken, _, err := jwtSvc.GenerateTokens(userID, 0, uuid.NewString(), jwtSvc.GetAccessTokenTTL(), jwtSvc.GetRefreshTokenTTL())
 		if err != nil {
 			return nil, fmt.Errorf("generate tokens: user_id=%d: %w", userID, err)
 		}

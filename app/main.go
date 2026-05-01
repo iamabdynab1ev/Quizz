@@ -125,7 +125,7 @@ func main() {
 		logLevel = "debug"
 	}
 
-	mainLogger, err := logger.CreateLogger(logLevel, "system")
+	mainLogger, err := logger.CreateLogger(logLevel, cfgPreview.AppName)
 	if err != nil {
 		panic("Не удалось создать логгер")
 	}
@@ -155,6 +155,9 @@ func main() {
 	e := echo.New()
 	e.HideBanner = true
 	e.Use(middleware.Recover())
+	e.Use(middleware.GzipWithConfig(middleware.GzipConfig{
+		Level: 5,
+	}))
 	e.GET("/ping", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -184,7 +187,7 @@ func main() {
 	wsHub := websocket.NewHub()
 
 	tgService := telegram.NewService(cfg.Telegram.BotToken)
-	notificationService := services.NewTelegramNotificationService(tgService, mainLogger)
+	notificationService := services.NewTelegramNotificationService(tgService, cacheRepo, mainLogger)
 	wsNotificationService := services.NewWebSocketNotificationService(wsHub, mainLogger.Named("WebSocketNotifier"))
 
 	notificationListener := listeners.NewNotificationListener(

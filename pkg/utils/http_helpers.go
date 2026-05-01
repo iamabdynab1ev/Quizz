@@ -135,6 +135,16 @@ func ParseFilterFromQuery(values url.Values) types.Filter {
 		Page:   1,
 	}
 
+	if fieldsStr := values.Get("fields"); fieldsStr != "" {
+		for _, field := range strings.Split(fieldsStr, ",") {
+			field = strings.TrimSpace(strings.ToLower(field))
+			if field == "" {
+				continue
+			}
+			filterReq.Fields = append(filterReq.Fields, field)
+		}
+	}
+
 	if limitStr := values.Get("limit"); limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
 			if l > MaxLimit {
@@ -178,6 +188,10 @@ func ParseFilterFromQuery(values url.Values) types.Filter {
 
 		if key == "search" {
 			filterReq.Search = vals[0]
+			continue
+		}
+
+		if key == "fields" {
 			continue
 		}
 

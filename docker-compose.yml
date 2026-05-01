@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:17
+    pull_policy: never
+    container_name: lms-arvand-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lms_arvand
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - lms_arvand_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lms_arvand"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  lms_arvand_postgres_data:

@@ -1,0 +1,15 @@
+[Unit]
+Description=LMS Arvand API
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/lms-arvand-backend
+EnvironmentFile=/opt/lms-arvand-backend/.env
+ExecStart=/opt/lms-arvand-backend/bin/api
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

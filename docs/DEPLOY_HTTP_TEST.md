@@ -3,7 +3,7 @@
 Тестовый запуск проекта без HTTPS:
 
 - frontend доступен на `http://192.168.10.79:4041`
-- backend слушает `127.0.0.1:8080`
+- backend слушает `127.0.0.1:9000`
 - nginx разруливает один origin и один порт
 
 ## 1. Backend
@@ -12,7 +12,7 @@
 
 Ключевые значения:
 
-- `HTTP_ADDRESS=127.0.0.1:8080`
+- `HTTP_ADDRESS=127.0.0.1:9000`
 - `HTTP_CORS_ALLOWED_ORIGINS=*`
 - `MIGRATE_RUN_ON_START=true`
 - `SEED_RUN_ON_START=true`
@@ -40,8 +40,8 @@ sudo systemctl reload nginx
 
 Конфиг делает следующее:
 
-- `/api/v1/*` -> `127.0.0.1:8080`
-- `/health` -> `127.0.0.1:8080`
+- `/api/v1/*` -> `127.0.0.1:9000`
+- `/health` -> `127.0.0.1:9000`
 - `/` -> React build из `/var/www/arvand`
 
 ## 3. Frontend
@@ -66,8 +66,8 @@ VITE_API_URL=http://192.168.10.79:4041/api/v1
 Browser
   -> http://192.168.10.79:4041
        -> Nginx
-            /api/v1/* -> Go :8080
-            /health   -> Go :8080
+            /api/v1/* -> Go :9000
+            /health   -> Go :9000
             /*        -> React static files
 ```
 

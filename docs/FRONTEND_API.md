@@ -6,9 +6,9 @@
 
 ## 1. Базовые данные
 
-- Base URL: `http://localhost:8080/api/v1`
-- Health URL: `http://localhost:8080/health`
-- Public verify URL: `http://localhost:8080/api/v1/certificates/verify/{verifyHash}`
+- Base URL: `http://localhost:9000/api/v1`
+- Health URL: `http://localhost:9000/health`
+- Public verify URL: `http://localhost:9000/api/v1/certificates/verify/{verifyHash}`
 - Dev admin login:
   - `email`: `admin@local.test`
   - `password`: `Admin123!`

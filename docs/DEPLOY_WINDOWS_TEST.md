@@ -3,7 +3,7 @@
 Тестовый запуск на Windows-сервере:
 
 - frontend: `http://192.168.10.79:4041`
-- backend: `127.0.0.1:8080`
+- backend: `127.0.0.1:9000`
 - nginx for Windows слушает один порт `4041`
 
 ## 1. Что собирать
@@ -31,7 +31,7 @@ C:\projects\Quiz\bin\api.exe
 
 Ключевые значения:
 
-- `HTTP_ADDRESS=127.0.0.1:8080`
+- `HTTP_ADDRESS=127.0.0.1:9000`
 - `HTTP_CORS_ALLOWED_ORIGINS=*`
 - `AUTH_SESSION_CACHE_TTL=5m`
 - `MIGRATE_RUN_ON_START=true`
@@ -86,7 +86,7 @@ DATABASE_URL=postgres://postgres:YOUR_PASSWORD@127.0.0.1:5432/lms_arvand?sslmode
 
 - `root` должен указывать на папку с React build, например `C:/var/www/arvand`
 - nginx слушает `4041`
-- backend живет только на `127.0.0.1:8080`
+- backend живет только на `127.0.0.1:9000`
 
 ## 5. Frontend
 
@@ -114,8 +114,8 @@ C:\var\www\arvand
 Browser
   -> http://192.168.10.79:4041
        -> nginx for Windows
-            /api/v1/* -> Go backend 127.0.0.1:8080
-            /health   -> Go backend 127.0.0.1:8080
+            /api/v1/* -> Go backend 127.0.0.1:9000
+            /health   -> Go backend 127.0.0.1:9000
             /*        -> React static files
 ```
 

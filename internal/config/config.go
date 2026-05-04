@@ -190,7 +190,7 @@ func Load() (Config, error) {
 			LogLevel: strings.ToUpper(getEnv("LOG_LEVEL", "INFO")),
 		},
 		HTTP: HTTPConfig{
-			Address:            getEnv("HTTP_ADDRESS", ":8080"),
+			Address:            getEnv("HTTP_ADDRESS", "127.0.0.1:9000"),
 			CORSAllowedOrigins: getStringSlice("HTTP_CORS_ALLOWED_ORIGINS", []string{"*"}),
 			ReadTimeout:        readTimeout,
 			ReadHeaderTimeout:  readHeaderTimeout,

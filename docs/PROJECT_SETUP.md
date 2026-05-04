@@ -14,11 +14,11 @@ Required:
 Used by the backend:
 
 - PostgreSQL for the main data store
-- Redis for auth/session and short-lived runtime state
+- in-memory cache for auth/session and short-lived runtime state
 - local disk for uploads
 - Google token verification for Google login
 
-The backend does **not** require a message broker, S3, or MinIO to start.
+The backend does **not** require Redis, a message broker, S3, or MinIO to start.
 
 ## 2. How configuration is loaded
 
@@ -139,6 +139,8 @@ SEED_ADMIN_PATRONYMIC=
 SEED_ADMIN_IS_SUPER_ADMIN=true
 SEED_ADMIN_PERMISSIONS=*
 ```
+
+The first login on the frontend should use `SEED_ADMIN_EMAIL` as the email input and `SEED_ADMIN_PASSWORD` as the password.
 
 ## 5. Run and build
 

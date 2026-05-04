@@ -33,6 +33,7 @@ func NewAuthHandler(logger *slog.Logger, useCase authUseCase) *AuthHandler {
 func (h *AuthHandler) Login(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var request struct {
 		Identifier string `json:"identifier"`
+		Email      string `json:"email"`
 		Password   string `json:"password"`
 	}
 
@@ -41,8 +42,13 @@ func (h *AuthHandler) Login(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
+	identifier := strings.TrimSpace(request.Identifier)
+	if identifier == "" {
+		identifier = strings.TrimSpace(request.Email)
+	}
+
 	result, err := h.useCase.Login(r.Context(), domain.LoginParams{
-		Identifier: request.Identifier,
+		Identifier: identifier,
 		Password:   request.Password,
 		IPAddress:  requestIP(r),
 		UserAgent:  normalizeUserAgent(r.UserAgent()),

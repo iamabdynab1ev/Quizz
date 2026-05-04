@@ -10,7 +10,7 @@
 - Health URL: `http://localhost:8080/health`
 - Public verify URL: `http://localhost:8080/api/v1/certificates/verify/{verifyHash}`
 - Dev admin login:
-  - `username`: `admin`
+  - `email`: `admin@local.test`
   - `password`: `Admin123!`
 
 ## 2. Общие правила API
@@ -608,10 +608,12 @@ Request:
 
 ```json
 {
-  "identifier": "admin",
+  "email": "admin@local.test",
   "password": "Admin123!"
 }
 ```
+
+- Frontend should show an Email field for first login; backend also still accepts `identifier` as a fallback.
 
 Response `200 OK`:
 
@@ -629,7 +631,7 @@ Response `200 OK`:
 
 Логика:
 
-- `identifier` это username или email
+- Frontend should send email in `email` for the first login flow; backend still accepts `identifier` as a fallback
 - token не JWT
 - session хранится на backend в таблице `sessions`
 - при слишком большом числе неудачных попыток backend может вернуть `429 Too Many Requests`
@@ -1333,7 +1335,7 @@ Admin only.
 ### 19.2 Сейчас не реализовано
 
 - websocket layer
-- Redis-backed distributed session cache
+- Redis-backed distributed session cache для multi-node deployment
 
 ### 19.3 Upload API
 

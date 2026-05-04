@@ -15,7 +15,10 @@
 - ручной выдачи сертификатов;
 - работы с bilingual-контентом (`ru` / `tj`);
 - отзывов о курсах;
-- пользовательских уведомлений;
+- пользовательских уведомлений;{
+  "identifier": "admin",
+  "password": "Admin123!"
+}
 - административного управления пользователями и учебным контентом;
 - webhooks как админской сущности и audit logs как читаемого журнала.
 
@@ -365,9 +368,11 @@ Google login уже реализован:
 
 ### 8.6 Текущие security gaps
 
+Для single-node local run дополнительных dependencies не требуется.
+
 Сейчас отсутствует только:
 
-- Redis-backed distributed session cache / revocation layer
+- Redis-backed distributed session cache / revocation layer для multi-node deployment
 
 ## 9. Доменная модель
 
@@ -1061,4 +1066,3 @@ Route открыт для admin:
 2. отсутствие полноценного lockout / distributed rate limiting в auth;
 3. review flow без ручного по-вопросного scoring;
 4. `DELETE /course-tests` всё ещё использует query params вместо нормального REST path.
-

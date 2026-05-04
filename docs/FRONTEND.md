@@ -58,7 +58,7 @@
 | --- | --- | --- |
 | GET | `/health` | Health check |
 | GET | `/api/v1/health` | Health check через API |
-| POST | `/api/v1/auth/login` | Логин по identifier/password |
+| POST | `/api/v1/auth/login` | Логин по email/password (identifier still accepted) |
 | POST | `/api/v1/auth/google` | Логин через Google `id_token` |
 | GET | `/api/v1/certificates/verify/{verifyHash}` | Публичная проверка сертификата |
 
@@ -203,7 +203,7 @@ DELETE /api/v1/course-tests?module_id=...&quiz_id=...
 
 ```json
 {
-  "identifier": "admin",
+  "email": "admin@local.test",
   "password": "secret"
 }
 ```

@@ -160,6 +160,27 @@ func (r *EnrollmentRepository) Complete(ctx context.Context, enrollmentID string
 	return enrollment, nil
 }
 
+func (r *EnrollmentRepository) GetLatestByCourseAndUser(ctx context.Context, courseID, userID string) (domain.Enrollment, error) {
+	enrollment, err := scanEnrollmentRow(r.pool.QueryRow(ctx, `
+		SELECT id, course_id, user_id, status, enrolled_at, completed_at
+		FROM enrollments
+		WHERE course_id = $1
+			AND user_id = $2
+			AND status IN ('active', 'completed')
+		ORDER BY enrolled_at DESC
+		LIMIT 1
+	`, courseID, userID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Enrollment{}, fmt.Errorf("repository postgres enrollments get latest by course and user: %w", domain.ErrNotFound)
+		}
+
+		return domain.Enrollment{}, fmt.Errorf("repository postgres enrollments get latest by course and user: %w", err)
+	}
+
+	return enrollment, nil
+}
+
 func (r *EnrollmentRepository) HasEnrollment(ctx context.Context, courseID, userID string) (bool, error) {
 	var exists bool
 	if err := r.pool.QueryRow(ctx, `

@@ -56,8 +56,8 @@ func (u *CertificateUseCase) Create(ctx context.Context, params domain.CreateCer
 		return domain.Certificate{}, fmt.Errorf("usecase certificates create load context: %w", err)
 	}
 
-	if issuanceContext.EnrollmentStatus != domain.EnrollmentStatusCompleted {
-		return domain.Certificate{}, fmt.Errorf("enrollment is not completed: %w", domain.ErrValidation)
+	if issuanceContext.EnrollmentStatus != domain.EnrollmentStatusActive && issuanceContext.EnrollmentStatus != domain.EnrollmentStatusCompleted {
+		return domain.Certificate{}, fmt.Errorf("enrollment is not active or completed: %w", domain.ErrValidation)
 	}
 
 	if !issuanceContext.CertificateEnabled {

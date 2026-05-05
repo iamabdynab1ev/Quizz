@@ -242,7 +242,8 @@ func normalizeQuizListFilter(filter domain.QuizListFilter) (domain.QuizListFilte
 
 func normalizeQuestionPayloads(questions []domain.QuestionPayload) ([]domain.QuestionPayload, error) {
 	if len(questions) == 0 {
-		return nil, fmt.Errorf("at least one question is required: %w", domain.ErrValidation)
+		// Draft quizzes can be created empty and filled later from the admin UI.
+		return nil, nil
 	}
 
 	normalized := make([]domain.QuestionPayload, 0, len(questions))

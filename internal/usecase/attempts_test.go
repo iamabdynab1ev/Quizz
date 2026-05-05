@@ -68,6 +68,109 @@ func (r *attemptReviewRepoStub) UpdateReview(ctx context.Context, params domain.
 	return attempt, nil
 }
 
+type attemptSubmitRepoStub struct {
+	quiz          domain.Quiz
+	attempt       domain.Attempt
+	getQuizErr    error
+	countErr      error
+	createErr     error
+	getAttemptErr error
+
+	createCalled bool
+	createParams domain.CreateAttemptRecordParams
+}
+
+func (r *attemptSubmitRepoStub) GetQuizForAttempt(ctx context.Context, quizID string) (domain.Quiz, error) {
+	return r.quiz, r.getQuizErr
+}
+
+func (r *attemptSubmitRepoStub) CountUserQuizAttempts(ctx context.Context, quizID, userID string) (int, error) {
+	if r.countErr != nil {
+		return 0, r.countErr
+	}
+
+	return 0, nil
+}
+
+func (r *attemptSubmitRepoStub) CreateAttempt(ctx context.Context, params domain.CreateAttemptRecordParams) (domain.Attempt, error) {
+	r.createCalled = true
+	r.createParams = params
+	if r.createErr != nil {
+		return domain.Attempt{}, r.createErr
+	}
+
+	attempt := r.attempt
+	if attempt.ID == "" {
+		attempt.ID = "attempt-created"
+	}
+	if attempt.QuizID == "" {
+		attempt.QuizID = params.QuizID
+	}
+	if attempt.UserID == nil {
+		userID := params.UserID
+		attempt.UserID = &userID
+	}
+	attempt.Passed = params.Passed
+	attempt.NeedsReview = params.NeedsReview
+	attempt.TotalEarned = params.TotalEarned
+	attempt.TotalMax = params.TotalMax
+	attempt.ScorePercent = params.ScorePercent
+
+	return attempt, nil
+}
+
+func (r *attemptSubmitRepoStub) GetAttemptByID(ctx context.Context, attemptID string) (domain.Attempt, error) {
+	if r.getAttemptErr != nil {
+		return domain.Attempt{}, r.getAttemptErr
+	}
+
+	return r.attempt, nil
+}
+
+func (r *attemptSubmitRepoStub) ListAttempts(ctx context.Context, filter domain.AttemptListFilter) ([]domain.Attempt, int, error) {
+	panic("unexpected ListAttempts call")
+}
+
+func (r *attemptSubmitRepoStub) UpdateReview(ctx context.Context, params domain.ReviewAttemptParams) (domain.Attempt, error) {
+	panic("unexpected UpdateReview call")
+}
+
+type attemptEnrollmentLookupStub struct {
+	enrollment domain.Enrollment
+	err        error
+	called     bool
+	courseID   string
+	userID     string
+}
+
+func (l *attemptEnrollmentLookupStub) GetLatestByCourseAndUser(ctx context.Context, courseID, userID string) (domain.Enrollment, error) {
+	l.called = true
+	l.courseID = courseID
+	l.userID = userID
+	if l.err != nil {
+		return domain.Enrollment{}, l.err
+	}
+
+	return l.enrollment, nil
+}
+
+type attemptAutoIssuerStub struct {
+	called       bool
+	enrollmentID string
+	certificate  *domain.Certificate
+	err          error
+}
+
+func (s *attemptAutoIssuerStub) TryAutoIssueForEnrollment(ctx context.Context, enrollmentID string) (*domain.Certificate, error) {
+	s.called = true
+	s.enrollmentID = enrollmentID
+	if s.err != nil {
+		return nil, s.err
+	}
+
+	return s.certificate, nil
+}
+
 func TestAttemptUseCaseReviewManualScoring(t *testing.T) {
 	questions := []domain.Question{
 		{
@@ -271,6 +374,81 @@ func TestAttemptUseCaseReviewManualScoringMissingScore(t *testing.T) {
 	}
 }
 
+func TestAttemptUseCaseSubmitAutoIssuesCertificate(t *testing.T) {
+	quiz := domain.Quiz{
+		ID:           "quiz-submit-1",
+		CourseID:     ptr("course-1"),
+		PassingScore: 50,
+		MaxAttempts:  3,
+		Questions: []domain.Question{
+			{
+				ID:       "q1",
+				Type:     domain.QuestionTypeSingleChoice,
+				Points:   10,
+				Required: true,
+				Config: mustJSON(t, map[string]any{
+					"options": []map[string]any{
+						{"id": "a", "is_correct": true},
+						{"id": "b", "is_correct": false},
+					},
+				}),
+			},
+		},
+	}
+
+	repo := &attemptSubmitRepoStub{
+		quiz: quiz,
+		attempt: domain.Attempt{
+			ID: "attempt-submit-1",
+		},
+	}
+	enrollmentLookup := &attemptEnrollmentLookupStub{
+		enrollment: domain.Enrollment{
+			ID: "enrollment-1",
+		},
+	}
+	autoIssuer := &attemptAutoIssuerStub{
+		certificate: &domain.Certificate{ID: "cert-1"},
+	}
+
+	uc := NewAttemptUseCase(repo).
+		WithEnrollmentLookup(enrollmentLookup).
+		WithCertificateAutoIssuer(autoIssuer)
+
+	result, err := uc.Submit(context.Background(), domain.SubmitAttemptParams{
+		QuizID: quiz.ID,
+		UserID: "user-1",
+		Answers: []domain.AttemptAnswer{
+			{
+				QuestionID:        "q1",
+				SelectedOptionIDs: []string{"a"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("submit returned error: %v", err)
+	}
+
+	if !repo.createCalled {
+		t.Fatalf("expected attempt create to be called")
+	}
+	if !enrollmentLookup.called {
+		t.Fatalf("expected enrollment lookup to be called")
+	}
+	if enrollmentLookup.courseID != "course-1" || enrollmentLookup.userID != "user-1" {
+		t.Fatalf("unexpected enrollment lookup args: course_id=%q user_id=%q", enrollmentLookup.courseID, enrollmentLookup.userID)
+	}
+	if !autoIssuer.called {
+		t.Fatalf("expected auto issuer to be called")
+	}
+	if autoIssuer.enrollmentID != "enrollment-1" {
+		t.Fatalf("unexpected auto issuer enrollment id: %q", autoIssuer.enrollmentID)
+	}
+	if !result.Passed {
+		t.Fatalf("expected passed attempt")
+	}
+}
+
 func ptr[T any](value T) *T {
 	return &value
 }
@@ -300,3 +478,6 @@ func almostEqual(left, right float64) bool {
 }
 
 var _ attemptRepository = (*attemptReviewRepoStub)(nil)
+var _ attemptRepository = (*attemptSubmitRepoStub)(nil)
+var _ attemptEnrollmentLookup = (*attemptEnrollmentLookupStub)(nil)
+var _ attemptCertificateAutoIssuer = (*attemptAutoIssuerStub)(nil)

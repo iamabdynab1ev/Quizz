@@ -123,6 +123,7 @@ func (u *CourseUseCase) Archive(ctx context.Context, courseID string) error {
 
 func normalizeCreateCourseParams(params domain.CreateCourseParams) (domain.CreateCourseParams, error) {
 	params.CoverImageURL = normalizeOptionalString(params.CoverImageURL)
+	params.VideoURL = normalizeOptionalString(params.VideoURL)
 	params.Category = normalizeOptionalString(params.Category)
 
 	if err := params.Title.ValidateRequired(); err != nil {
@@ -132,6 +133,8 @@ func normalizeCreateCourseParams(params domain.CreateCourseParams) (domain.Creat
 	if params.Status == "" {
 		params.Status = domain.CourseStatusDraft
 	}
+
+	params.CertificateEnabled = true
 
 	if !params.Status.IsValid() {
 		return domain.CreateCourseParams{}, fmt.Errorf("status is invalid: %w", domain.ErrValidation)
@@ -155,6 +158,7 @@ func normalizeCreateCourseParams(params domain.CreateCourseParams) (domain.Creat
 func normalizeUpdateCourseParams(params domain.UpdateCourseParams) (domain.UpdateCourseParams, error) {
 	params.ID = strings.TrimSpace(params.ID)
 	params.CoverImageURL = normalizeOptionalString(params.CoverImageURL)
+	params.VideoURL = normalizeOptionalString(params.VideoURL)
 	params.Category = normalizeOptionalString(params.Category)
 
 	if params.ID == "" {

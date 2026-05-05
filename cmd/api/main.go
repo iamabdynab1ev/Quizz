@@ -121,7 +121,7 @@ func run() error {
 		cfg.Auth.LoginAttemptWindow,
 		googleVerifier,
 	)
-	authHandler := httpHandler.NewAuthHandler(logger, authUseCase)
+	authHandler := httpHandler.NewAuthHandler(logger, authUseCase, cfg.Google.ClientID)
 
 	courseRepository := postgres.NewCourseRepository(dbPool)
 	courseUseCase := usecase.NewCourseUseCase(courseRepository).WithAudit(auditLogger)
@@ -143,6 +143,7 @@ func run() error {
 	certificateUseCase := usecase.NewCertificateUseCase(certificateRepository).WithAudit(auditLogger)
 	certificatesHandler := httpHandler.NewCertificatesHandler(logger, certificateUseCase)
 	enrollmentUseCase.WithCertificateAutoIssuer(certificateUseCase)
+	attemptUseCase.WithEnrollmentLookup(enrollmentRepository).WithCertificateAutoIssuer(certificateUseCase)
 
 	courseTestRepository := postgres.NewCourseTestRepository(dbPool)
 	courseTestUseCase := usecase.NewCourseTestUseCase(courseTestRepository)
@@ -253,18 +254,16 @@ func run() error {
 func loadEnvFiles() error {
 	paths := make([]string, 0, 4)
 
-	if override := strings.TrimSpace(os.Getenv("ENV_FILE")); override != "" {
-		paths = append(paths, override)
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		paths = append(paths, filepath.Join(filepath.Dir(exeDir), ".env"))
+		paths = append(paths, filepath.Join(exeDir, ".env"))
 	}
 
 	paths = append(paths, ".env")
 
-	if exePath, err := os.Executable(); err == nil {
-		exeDir := filepath.Dir(exePath)
-		paths = append(paths,
-			filepath.Join(exeDir, ".env"),
-			filepath.Join(filepath.Dir(exeDir), ".env"),
-		)
+	if override := strings.TrimSpace(os.Getenv("ENV_FILE")); override != "" {
+		paths = append(paths, override)
 	}
 
 	seen := make(map[string]struct{}, len(paths))

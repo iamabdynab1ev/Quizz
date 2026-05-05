@@ -334,7 +334,7 @@ func (r *UserRepository) Update(ctx context.Context, params domain.UpdateUserPar
 			username = $2,
 			email = $3,
 			google_id = $4,
-			password_hash = $5,
+			password_hash = COALESCE($5, password_hash),
 			role = $6,
 			first_name = $7,
 			last_name = $8,

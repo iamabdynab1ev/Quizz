@@ -31,4 +31,9 @@ go test ./...
 - Base API prefix: `/api/v1`
 - Health checks: `/health` and `/api/v1/health`
 - Static uploads are served from `/uploads/*`
-- Configuration is loaded from `.env`, `ENV_FILE`, exe folder, or parent folder
+- Google Sign-In config is public at `/api/v1/auth/google/config`; set `GOOGLE_CLIENT_ID` in `.env` to enable it.
+- Configuration is loaded from `.env` files with this priority:
+  1. `ENV_FILE` if set
+  2. `.env` in the current working directory
+  3. `.env` next to the compiled exe
+  4. `.env` in the parent directory of the exe

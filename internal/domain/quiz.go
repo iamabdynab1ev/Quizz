@@ -85,6 +85,7 @@ type Quiz struct {
 	ID               string        `json:"id"`
 	Title            MultiLangText `json:"title"`
 	Description      MultiLangText `json:"description"`
+	CourseID         *string       `json:"course_id,omitempty"`
 	Category         *string       `json:"category,omitempty"`
 	Status           QuizStatus    `json:"status"`
 	Platforms        []Platform    `json:"platforms"`

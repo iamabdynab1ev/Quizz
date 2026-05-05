@@ -108,22 +108,29 @@ func (r *QuizRepository) Create(ctx context.Context, params domain.CreateQuizPar
 func (r *QuizRepository) GetByID(ctx context.Context, quizID string) (domain.Quiz, error) {
 	quiz, err := scanQuizRow(r.pool.QueryRow(ctx, `
 		SELECT
-			id,
-			title,
-			description,
-			category,
-			status,
-			platforms,
-			time_limit_minutes,
-			passing_score,
-			max_attempts,
-			shuffle_questions,
-			show_results,
-			allow_retry,
-			created_at,
-			updated_at
-		FROM quizzes
-		WHERE id = $1
+			q.id,
+			q.title,
+			q.description,
+			q.category,
+			q.status,
+			q.platforms,
+			q.time_limit_minutes,
+			q.passing_score,
+			q.max_attempts,
+			q.shuffle_questions,
+			q.show_results,
+			q.allow_retry,
+			q.created_at,
+			q.updated_at,
+			(
+				SELECT ct.course_id::text
+				FROM course_tests ct
+				WHERE ct.quiz_id = q.id
+				ORDER BY ct.position ASC
+				LIMIT 1
+			) AS course_id
+		FROM quizzes q
+		WHERE q.id = $1
 	`, quizID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -148,21 +155,28 @@ func (r *QuizRepository) List(ctx context.Context, filter domain.QuizListFilter)
 		if includePagination {
 			query.WriteString(`
 				SELECT
-					id,
-					title,
-					description,
-					category,
-					status,
-					platforms,
-					time_limit_minutes,
-					passing_score,
-					max_attempts,
-					shuffle_questions,
-					show_results,
-					allow_retry,
-					created_at,
-					updated_at
-				FROM quizzes
+					q.id,
+					q.title,
+					q.description,
+					q.category,
+					q.status,
+					q.platforms,
+					q.time_limit_minutes,
+					q.passing_score,
+					q.max_attempts,
+					q.shuffle_questions,
+					q.show_results,
+					q.allow_retry,
+					q.created_at,
+					q.updated_at,
+					(
+						SELECT ct.course_id::text
+						FROM course_tests ct
+						WHERE ct.quiz_id = q.id
+						ORDER BY ct.position ASC
+						LIMIT 1
+					) AS course_id
+				FROM quizzes q
 				WHERE 1 = 1
 			`)
 		} else {
@@ -207,7 +221,7 @@ func (r *QuizRepository) List(ctx context.Context, filter domain.QuizListFilter)
 		}
 
 		if includePagination {
-			query.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
+			query.WriteString(fmt.Sprintf(" ORDER BY q.created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
 			args = append(args, filter.Limit, filter.Offset)
 		}
 
@@ -443,6 +457,7 @@ func scanQuizRow(scanner quizRowScanner) (domain.Quiz, error) {
 	var status string
 	var platforms []string
 	var timeLimitMinutes sql.NullInt32
+	var courseID sql.NullString
 
 	if err := scanner.Scan(
 		&quiz.ID,
@@ -459,6 +474,7 @@ func scanQuizRow(scanner quizRowScanner) (domain.Quiz, error) {
 		&quiz.AllowRetry,
 		&quiz.CreatedAt,
 		&quiz.UpdatedAt,
+		&courseID,
 	); err != nil {
 		return domain.Quiz{}, err
 	}
@@ -474,6 +490,7 @@ func scanQuizRow(scanner quizRowScanner) (domain.Quiz, error) {
 	}
 
 	quiz.Category = optionalString(category)
+	quiz.CourseID = optionalString(courseID)
 	quiz.Status = domain.QuizStatus(status)
 	quiz.Platforms = stringsToPlatforms(platforms)
 	quiz.TimeLimitMinutes = optionalInt(timeLimitMinutes)

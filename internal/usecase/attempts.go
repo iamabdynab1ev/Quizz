@@ -3,7 +3,9 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -20,10 +22,20 @@ type attemptRepository interface {
 	UpdateReview(ctx context.Context, params domain.ReviewAttemptParams) (domain.Attempt, error)
 }
 
+type attemptEnrollmentLookup interface {
+	GetLatestByCourseAndUser(ctx context.Context, courseID, userID string) (domain.Enrollment, error)
+}
+
+type attemptCertificateAutoIssuer interface {
+	TryAutoIssueForEnrollment(ctx context.Context, enrollmentID string) (*domain.Certificate, error)
+}
+
 type AttemptUseCase struct {
-	repository attemptRepository
-	now        func() time.Time
-	audit      *AuditLogger
+	repository       attemptRepository
+	enrollmentLookup attemptEnrollmentLookup
+	autoIssuer       attemptCertificateAutoIssuer
+	now              func() time.Time
+	audit            *AuditLogger
 }
 
 func NewAttemptUseCase(repository attemptRepository) *AttemptUseCase {
@@ -35,6 +47,16 @@ func NewAttemptUseCase(repository attemptRepository) *AttemptUseCase {
 
 func (u *AttemptUseCase) WithAudit(audit *AuditLogger) *AttemptUseCase {
 	u.audit = audit
+	return u
+}
+
+func (u *AttemptUseCase) WithEnrollmentLookup(enrollmentLookup attemptEnrollmentLookup) *AttemptUseCase {
+	u.enrollmentLookup = enrollmentLookup
+	return u
+}
+
+func (u *AttemptUseCase) WithCertificateAutoIssuer(autoIssuer attemptCertificateAutoIssuer) *AttemptUseCase {
+	u.autoIssuer = autoIssuer
 	return u
 }
 
@@ -123,6 +145,8 @@ func (u *AttemptUseCase) Submit(ctx context.Context, params domain.SubmitAttempt
 		}
 	}
 
+	u.tryAutoIssueCertificate(ctx, quiz, attempt)
+
 	return attempt, nil
 }
 
@@ -169,16 +193,19 @@ func (u *AttemptUseCase) Review(ctx context.Context, params domain.ReviewAttempt
 		return domain.Attempt{}, fmt.Errorf("attempt does not require review: %w", domain.ErrConflict)
 	}
 
+	var quiz domain.Quiz
+	if len(normalized.Scores) > 0 || (u.autoIssuer != nil && u.enrollmentLookup != nil) {
+		quiz, err = u.repository.GetQuizForAttempt(ctx, current.QuizID)
+		if err != nil {
+			return domain.Attempt{}, fmt.Errorf("usecase attempts review load quiz: %w", err)
+		}
+	}
+
 	normalized.TotalEarned = current.TotalEarned
 	normalized.ScorePercent = current.ScorePercent
 	normalized.ReviewScores = json.RawMessage("[]")
 
 	if len(normalized.Scores) > 0 {
-		quiz, err := u.repository.GetQuizForAttempt(ctx, current.QuizID)
-		if err != nil {
-			return domain.Attempt{}, fmt.Errorf("usecase attempts review load quiz: %w", err)
-		}
-
 		manualTotalEarned, manualScorePercent, reviewScores, err := u.evaluateManualReview(current, normalized.Scores)
 		if err != nil {
 			return domain.Attempt{}, fmt.Errorf("usecase attempts review manual scoring: %w", err)
@@ -217,7 +244,64 @@ func (u *AttemptUseCase) Review(ctx context.Context, params domain.ReviewAttempt
 		})
 	}
 
+	u.tryAutoIssueCertificate(ctx, quiz, attempt)
+
 	return attempt, nil
+}
+
+func (u *AttemptUseCase) tryAutoIssueCertificate(ctx context.Context, quiz domain.Quiz, attempt domain.Attempt) {
+	if u.autoIssuer == nil || u.enrollmentLookup == nil {
+		return
+	}
+
+	if !attempt.Passed || attempt.NeedsReview {
+		return
+	}
+
+	if quiz.CourseID == nil || strings.TrimSpace(*quiz.CourseID) == "" {
+		return
+	}
+
+	if attempt.UserID == nil || strings.TrimSpace(*attempt.UserID) == "" {
+		return
+	}
+
+	userID := strings.TrimSpace(*attempt.UserID)
+
+	enrollment, err := u.enrollmentLookup.GetLatestByCourseAndUser(ctx, *quiz.CourseID, userID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return
+		}
+
+		slog.ErrorContext(ctx, "attempt certificate enrollment lookup failed",
+			slog.String("attempt_id", attempt.ID),
+			slog.String("quiz_id", attempt.QuizID),
+			slog.String("user_id", userID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+
+	certificate, err := u.autoIssuer.TryAutoIssueForEnrollment(ctx, enrollment.ID)
+	if err != nil {
+		slog.ErrorContext(ctx, "attempt certificate auto issue failed",
+			slog.String("attempt_id", attempt.ID),
+			slog.String("quiz_id", attempt.QuizID),
+			slog.String("enrollment_id", enrollment.ID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+
+	if certificate != nil {
+		slog.InfoContext(ctx, "attempt certificate auto issued",
+			slog.String("attempt_id", attempt.ID),
+			slog.String("quiz_id", attempt.QuizID),
+			slog.String("enrollment_id", enrollment.ID),
+			slog.String("certificate_id", certificate.ID),
+		)
+	}
 }
 
 func normalizeSubmitAttemptParams(params domain.SubmitAttemptParams) (domain.SubmitAttemptParams, error) {

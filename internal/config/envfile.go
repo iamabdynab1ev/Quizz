@@ -9,7 +9,7 @@ import (
 )
 
 // LoadEnvFile loads KEY=value pairs from a local .env file.
-// Existing process environment variables keep priority.
+// File values override any existing process environment values.
 func LoadEnvFile(path string) error {
 	file, err := os.Open(path)
 	if err != nil {
@@ -47,10 +47,6 @@ func LoadEnvFile(path string) error {
 
 		value = strings.TrimSpace(value)
 		value = trimQuotes(value)
-
-		if _, exists := os.LookupEnv(key); exists {
-			continue
-		}
 
 		if err := os.Setenv(key, value); err != nil {
 			return fmt.Errorf("config set env %s from file: %w", key, err)

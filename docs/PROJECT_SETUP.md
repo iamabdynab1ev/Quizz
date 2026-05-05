@@ -31,6 +31,8 @@ Environment files are loaded in this order:
 3. `.env` next to the compiled exe
 4. `.env` in the parent directory of the exe
 
+`.env` values override existing process environment variables, so the local project file is the default source of truth during development.
+
 That means you can run the binary from a build folder as long as one of those locations contains `.env`.
 
 ## 3. Main env variables

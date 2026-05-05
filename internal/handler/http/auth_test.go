@@ -76,3 +76,29 @@ func TestAuthHandlerLoginUsesEmailFallback(t *testing.T) {
 		t.Fatalf("expected response to contain token, got %s", rr.Body.String())
 	}
 }
+
+func TestAuthHandlerGoogleConfig(t *testing.T) {
+	t.Parallel()
+
+	handler := NewAuthHandler(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&authHandlerUseCaseStub{},
+		"google-client-id.apps.googleusercontent.com",
+	)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/google/config", nil)
+	rr := httptest.NewRecorder()
+
+	handler.GoogleConfig(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`"enabled":true`)) {
+		t.Fatalf("expected google config to be enabled, got %s", rr.Body.String())
+	}
+
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`"client_id":"google-client-id.apps.googleusercontent.com"`)) {
+		t.Fatalf("expected google client id in response, got %s", rr.Body.String())
+	}
+}

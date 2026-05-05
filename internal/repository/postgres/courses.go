@@ -42,6 +42,7 @@ func (r *CourseRepository) Create(ctx context.Context, params domain.CreateCours
 			title,
 			description,
 			cover_image_url,
+			video_url,
 			category,
 			status,
 			platforms,
@@ -55,17 +56,19 @@ func (r *CourseRepository) Create(ctx context.Context, params domain.CreateCours
 			$3,
 			$4,
 			$5,
-			$6::platform[],
-			$7,
+			$6,
+			$7::platform[],
 			$8,
 			$9,
-			$10
+			$10,
+			$11
 		)
 		RETURNING id
 	`,
 		titleValue,
 		descriptionValue,
 		nullableStringPointerForWrite(params.CoverImageURL),
+		nullableStringPointerForWrite(params.VideoURL),
 		nullableStringPointerForWrite(params.Category),
 		string(params.Status),
 		platformsToStrings(params.Platforms),
@@ -88,21 +91,29 @@ func (r *CourseRepository) Create(ctx context.Context, params domain.CreateCours
 func (r *CourseRepository) GetByID(ctx context.Context, courseID string) (domain.Course, error) {
 	course, err := scanCourse(r.pool.QueryRow(ctx, `
 		SELECT
-			id,
-			title,
-			description,
-			cover_image_url,
-			category,
-			status,
-			platforms,
-			estimated_minutes,
-			certificate_enabled,
-			certificate_passing_score,
-			reviews_enabled,
-			created_at,
-			updated_at
-		FROM courses
-		WHERE id = $1
+			c.id,
+			c.title,
+			c.description,
+			c.cover_image_url,
+			c.video_url,
+			c.category,
+			c.status,
+			c.platforms,
+			c.estimated_minutes,
+			c.certificate_enabled,
+			c.certificate_passing_score,
+			c.reviews_enabled,
+			c.created_at,
+			c.updated_at,
+			(
+				SELECT ct.quiz_id::text
+				FROM course_tests ct
+				WHERE ct.course_id = c.id
+				ORDER BY ct.position ASC
+				LIMIT 1
+			) AS quiz_id
+		FROM courses c
+		WHERE c.id = $1
 	`, courseID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -121,20 +132,28 @@ func (r *CourseRepository) List(ctx context.Context, filter domain.CourseListFil
 		if includePagination {
 			query.WriteString(`
 				SELECT
-					id,
-					title,
-					description,
-					cover_image_url,
-					category,
-					status,
-					platforms,
-					estimated_minutes,
-					certificate_enabled,
-					certificate_passing_score,
-					reviews_enabled,
-					created_at,
-					updated_at
-				FROM courses
+					c.id,
+					c.title,
+					c.description,
+					c.cover_image_url,
+					c.video_url,
+					c.category,
+					c.status,
+					c.platforms,
+					c.estimated_minutes,
+					c.certificate_enabled,
+					c.certificate_passing_score,
+					c.reviews_enabled,
+					c.created_at,
+					c.updated_at,
+					(
+						SELECT ct.quiz_id::text
+						FROM course_tests ct
+						WHERE ct.course_id = c.id
+						ORDER BY ct.position ASC
+						LIMIT 1
+					) AS quiz_id
+				FROM courses c
 				WHERE 1 = 1
 			`)
 		} else {
@@ -179,7 +198,7 @@ func (r *CourseRepository) List(ctx context.Context, filter domain.CourseListFil
 		}
 
 		if includePagination {
-			query.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
+			query.WriteString(fmt.Sprintf(" ORDER BY c.created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
 			args = append(args, filter.Limit, filter.Offset)
 		}
 
@@ -234,13 +253,14 @@ func (r *CourseRepository) Update(ctx context.Context, params domain.UpdateCours
 			title = $2::jsonb,
 			description = $3::jsonb,
 			cover_image_url = $4,
-			category = $5,
-			status = $6,
-			platforms = $7::platform[],
-			estimated_minutes = $8,
-			certificate_enabled = $9,
-			certificate_passing_score = $10,
-			reviews_enabled = $11,
+			video_url = $5,
+			category = $6,
+			status = $7,
+			platforms = $8::platform[],
+			estimated_minutes = $9,
+			certificate_enabled = $10,
+			certificate_passing_score = $11,
+			reviews_enabled = $12,
 			updated_at = NOW()
 		WHERE id = $1
 		RETURNING id
@@ -249,6 +269,7 @@ func (r *CourseRepository) Update(ctx context.Context, params domain.UpdateCours
 		titleValue,
 		descriptionValue,
 		nullableStringPointerForWrite(params.CoverImageURL),
+		nullableStringPointerForWrite(params.VideoURL),
 		nullableStringPointerForWrite(params.Category),
 		string(params.Status),
 		platformsToStrings(params.Platforms),
@@ -297,16 +318,19 @@ func scanCourse(scanner courseRowScanner) (domain.Course, error) {
 	var titleBytes []byte
 	var descriptionBytes []byte
 	var coverImageURL sql.NullString
+	var videoURL sql.NullString
 	var category sql.NullString
 	var status string
 	var platforms []string
 	var estimatedMinutes sql.NullInt32
+	var quizID sql.NullString
 
 	if err := scanner.Scan(
 		&course.ID,
 		&titleBytes,
 		&descriptionBytes,
 		&coverImageURL,
+		&videoURL,
 		&category,
 		&status,
 		&platforms,
@@ -316,6 +340,7 @@ func scanCourse(scanner courseRowScanner) (domain.Course, error) {
 		&course.ReviewsEnabled,
 		&course.CreatedAt,
 		&course.UpdatedAt,
+		&quizID,
 	); err != nil {
 		return domain.Course{}, err
 	}
@@ -331,7 +356,9 @@ func scanCourse(scanner courseRowScanner) (domain.Course, error) {
 	}
 
 	course.CoverImageURL = optionalString(coverImageURL)
+	course.VideoURL = optionalString(videoURL)
 	course.Category = optionalString(category)
+	course.QuizID = optionalString(quizID)
 	course.Status = domain.CourseStatus(status)
 	course.Platforms = stringsToPlatforms(platforms)
 	course.EstimatedMinutes = optionalInt(estimatedMinutes)

@@ -19,14 +19,21 @@ type authUseCase interface {
 }
 
 type AuthHandler struct {
-	logger  *slog.Logger
-	useCase authUseCase
+	logger         *slog.Logger
+	useCase        authUseCase
+	googleClientID string
 }
 
-func NewAuthHandler(logger *slog.Logger, useCase authUseCase) *AuthHandler {
+func NewAuthHandler(logger *slog.Logger, useCase authUseCase, googleClientID ...string) *AuthHandler {
+	clientID := ""
+	if len(googleClientID) > 0 {
+		clientID = strings.TrimSpace(googleClientID[0])
+	}
+
 	return &AuthHandler{
-		logger:  logger,
-		useCase: useCase,
+		logger:         logger,
+		useCase:        useCase,
+		googleClientID: clientID,
 	}
 }
 
@@ -91,6 +98,20 @@ func (h *AuthHandler) LoginWithGoogle(w nethttp.ResponseWriter, r *nethttp.Reque
 
 	if err := writeJSON(w, nethttp.StatusOK, result); err != nil {
 		h.logger.ErrorContext(r.Context(), "google login response failed", slog.String("error", err.Error()))
+	}
+}
+
+func (h *AuthHandler) GoogleConfig(w nethttp.ResponseWriter, r *nethttp.Request) {
+	response := struct {
+		Enabled  bool   `json:"enabled"`
+		ClientID string `json:"client_id,omitempty"`
+	}{
+		Enabled:  h.googleClientID != "",
+		ClientID: h.googleClientID,
+	}
+
+	if err := writeJSON(w, nethttp.StatusOK, response); err != nil {
+		h.logger.ErrorContext(r.Context(), "google config response failed", slog.String("error", err.Error()))
 	}
 }
 

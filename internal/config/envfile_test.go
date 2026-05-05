@@ -28,7 +28,7 @@ func TestLoadEnvFile(t *testing.T) {
 	}
 }
 
-func TestLoadEnvFileKeepsExistingValues(t *testing.T) {
+func TestLoadEnvFileOverridesExistingValues(t *testing.T) {
 	t.Setenv("TEST_ENV_THREE", "production")
 
 	dir := t.TempDir()
@@ -43,8 +43,8 @@ func TestLoadEnvFileKeepsExistingValues(t *testing.T) {
 		t.Fatalf("LoadEnvFile() error = %v", err)
 	}
 
-	if got := os.Getenv("TEST_ENV_THREE"); got != "production" {
-		t.Fatalf("TEST_ENV_THREE = %q, want %q", got, "production")
+	if got := os.Getenv("TEST_ENV_THREE"); got != "development" {
+		t.Fatalf("TEST_ENV_THREE = %q, want %q", got, "development")
 	}
 }
 

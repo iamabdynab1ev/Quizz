@@ -41,6 +41,8 @@ type Course struct {
 	Title                   MultiLangText `json:"title"`
 	Description             MultiLangText `json:"description"`
 	CoverImageURL           *string       `json:"cover_image_url,omitempty"`
+	VideoURL                *string       `json:"video_url,omitempty"`
+	QuizID                  *string       `json:"quiz_id,omitempty"`
 	Category                *string       `json:"category,omitempty"`
 	Status                  CourseStatus  `json:"status"`
 	Platforms               []Platform    `json:"platforms"`
@@ -56,6 +58,7 @@ type CreateCourseParams struct {
 	Title                   MultiLangText `json:"title"`
 	Description             MultiLangText `json:"description"`
 	CoverImageURL           *string       `json:"cover_image_url,omitempty"`
+	VideoURL                *string       `json:"video_url,omitempty"`
 	Category                *string       `json:"category,omitempty"`
 	Status                  CourseStatus  `json:"status"`
 	Platforms               []Platform    `json:"platforms"`
@@ -70,6 +73,7 @@ type UpdateCourseParams struct {
 	Title                   MultiLangText `json:"title"`
 	Description             MultiLangText `json:"description"`
 	CoverImageURL           *string       `json:"cover_image_url,omitempty"`
+	VideoURL                *string       `json:"video_url,omitempty"`
 	Category                *string       `json:"category,omitempty"`
 	Status                  CourseStatus  `json:"status"`
 	Platforms               []Platform    `json:"platforms"`

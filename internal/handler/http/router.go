@@ -52,6 +52,7 @@ func NewRouter(
 		if authHandler != nil {
 			api.Route("/auth", func(auth chi.Router) {
 				auth.Post("/login", authHandler.Login)
+				auth.Get("/google/config", authHandler.GoogleConfig)
 				auth.Post("/google", authHandler.LoginWithGoogle)
 			})
 		}

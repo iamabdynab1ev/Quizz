@@ -16,10 +16,31 @@ func NewLoginAttemptRepository(pool *pgxpool.Pool) *LoginAttemptRepository {
 	return &LoginAttemptRepository{pool: pool}
 }
 
-func (r *LoginAttemptRepository) CountRecentFailed(ctx context.Context, identifier string, ipAddress *string, since time.Time) (int, error) {
+func (r *LoginAttemptRepository) CountRecentFailed(ctx context.Context, identifier string, ipAddress *string, scope string, since time.Time) (int, error) {
 	var count int
 
-	if ipAddress != nil && *ipAddress != "" {
+	switch scope {
+	case "ip":
+		if ipAddress == nil || *ipAddress == "" {
+			return 0, nil
+		}
+
+		if err := r.pool.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM login_attempts
+			WHERE succeeded = false
+				AND attempted_at >= $2
+				AND ip_address = $1
+		`, *ipAddress, since).Scan(&count); err != nil {
+			return 0, fmt.Errorf("repository postgres login attempts count recent failed: %w", err)
+		}
+
+		return count, nil
+	case "identifier_ip":
+		if ipAddress == nil || *ipAddress == "" {
+			break
+		}
+
 		if err := r.pool.QueryRow(ctx, `
 			SELECT COUNT(*)
 			FROM login_attempts

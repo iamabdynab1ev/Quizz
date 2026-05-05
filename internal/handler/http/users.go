@@ -59,7 +59,7 @@ func NewUsersHandler(logger *slog.Logger, useCase userUseCase) *UsersHandler {
 func (h *UsersHandler) CreateUser(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var request userRequest
 	if err := decodeJSON(w, r, &request, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -118,7 +118,7 @@ func (h *UsersHandler) ListUsers(w nethttp.ResponseWriter, r *nethttp.Request) {
 func (h *UsersHandler) UpdateUser(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var request userRequest
 	if err := decodeJSON(w, r, &request, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 

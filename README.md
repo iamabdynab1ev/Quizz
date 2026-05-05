@@ -32,6 +32,7 @@ go test ./...
 - Health checks: `/health` and `/api/v1/health`
 - Static uploads are served from `/uploads/*`
 - Google Sign-In config is public at `/api/v1/auth/google/config`; set `GOOGLE_CLIENT_ID` in `.env` to enable it.
+- Login lockout is controlled by `.env`: `AUTH_LOGIN_LOCKOUT_ENABLED`, `AUTH_LOGIN_MAX_ATTEMPTS`, `AUTH_LOGIN_ATTEMPT_WINDOW`, `AUTH_LOGIN_LOCKOUT_SCOPE`.
 - Configuration is loaded from `.env` files with this priority:
   1. `ENV_FILE` if set
   2. `.env` in the current working directory

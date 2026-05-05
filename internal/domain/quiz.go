@@ -132,10 +132,11 @@ type UpdateQuizParams struct {
 }
 
 type QuizListFilter struct {
-	Search   string
-	Status   *QuizStatus
-	Category *string
-	Platform *Platform
-	Limit    int
-	Offset   int
+	Search          string
+	Status          *QuizStatus
+	Category        *string
+	Platform        *Platform
+	IncludeArchived bool
+	Limit           int
+	Offset          int
 }

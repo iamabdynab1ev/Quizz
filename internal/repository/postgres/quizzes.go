@@ -206,6 +206,8 @@ func (r *QuizRepository) List(ctx context.Context, filter domain.QuizListFilter)
 			query.WriteString(fmt.Sprintf(" AND status = $%d", position))
 			args = append(args, string(*filter.Status))
 			position++
+		} else if !filter.IncludeArchived {
+			query.WriteString(" AND status <> 'archived'")
 		}
 
 		if filter.Category != nil {

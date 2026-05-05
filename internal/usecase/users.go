@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/mail"
 	"strings"
+	"time"
 
 	"lms-arvand-backend/internal/domain"
 )
@@ -158,16 +159,15 @@ func normalizeCreateUserParams(params domain.CreateUserParams) (domain.CreateUse
 	params.City = normalizeOptionalString(params.City)
 	params.AvatarURL = normalizeOptionalString(params.AvatarURL)
 
-	if params.Username == "" {
-		return domain.CreateUserParams{}, fmt.Errorf("username is required: %w", domain.ErrValidation)
-	}
+	var validation fieldValidationBuilder
+	validation.addRequired("username", params.Username, "Логин или email пользователя")
 
 	if params.Password != nil && len(*params.Password) < 8 {
-		return domain.CreateUserParams{}, fmt.Errorf("password must be at least 8 characters: %w", domain.ErrValidation)
+		validation.add("password", "too_short", "Пароль должен быть минимум 8 символов")
 	}
 
 	if !params.Role.IsValid() {
-		return domain.CreateUserParams{}, fmt.Errorf("role is invalid: %w", domain.ErrValidation)
+		validation.add("role", "invalid_enum", "Роль должна быть admin, employee, student или guest")
 	}
 
 	if params.Gender == "" {
@@ -175,15 +175,20 @@ func normalizeCreateUserParams(params domain.CreateUserParams) (domain.CreateUse
 	}
 
 	if !params.Gender.IsValid() {
-		return domain.CreateUserParams{}, fmt.Errorf("gender is invalid: %w", domain.ErrValidation)
+		validation.add("gender", "invalid_enum", "Пол должен быть male, female, other или unspecified")
 	}
 
 	if err := validateEmail(params.Email); err != nil {
-		return domain.CreateUserParams{}, fmt.Errorf("email is invalid: %w", err)
+		validation.add("email", "invalid_email", "Email указан неверно")
 	}
 
 	if err := validateRolePayloads(params.Role, params.EmployeeInfo, params.AdminInfo, params.StudentInfo, params.GuestInfo); err != nil {
-		return domain.CreateUserParams{}, fmt.Errorf("role payload is invalid: %w", err)
+		return domain.CreateUserParams{}, err
+	}
+	addStudentInfoDateValidation(&validation, params.StudentInfo)
+
+	if err := validation.err(); err != nil {
+		return domain.CreateUserParams{}, err
 	}
 
 	normalizeUserRoleDetails(&params)
@@ -206,20 +211,16 @@ func normalizeUpdateUserParams(params domain.UpdateUserParams) (domain.UpdateUse
 	params.City = normalizeOptionalString(params.City)
 	params.AvatarURL = normalizeOptionalString(params.AvatarURL)
 
-	if params.ID == "" {
-		return domain.UpdateUserParams{}, fmt.Errorf("id is required: %w", domain.ErrValidation)
-	}
-
-	if params.Username == "" {
-		return domain.UpdateUserParams{}, fmt.Errorf("username is required: %w", domain.ErrValidation)
-	}
+	var validation fieldValidationBuilder
+	validation.addRequired("id", params.ID, "ID пользователя")
+	validation.addRequired("username", params.Username, "Логин или email пользователя")
 
 	if params.Password != nil && len(*params.Password) < 8 {
-		return domain.UpdateUserParams{}, fmt.Errorf("password must be at least 8 characters: %w", domain.ErrValidation)
+		validation.add("password", "too_short", "Пароль должен быть минимум 8 символов")
 	}
 
 	if !params.Role.IsValid() {
-		return domain.UpdateUserParams{}, fmt.Errorf("role is invalid: %w", domain.ErrValidation)
+		validation.add("role", "invalid_enum", "Роль должна быть admin, employee, student или guest")
 	}
 
 	if params.Gender == "" {
@@ -227,15 +228,20 @@ func normalizeUpdateUserParams(params domain.UpdateUserParams) (domain.UpdateUse
 	}
 
 	if !params.Gender.IsValid() {
-		return domain.UpdateUserParams{}, fmt.Errorf("gender is invalid: %w", domain.ErrValidation)
+		validation.add("gender", "invalid_enum", "Пол должен быть male, female, other или unspecified")
 	}
 
 	if err := validateEmail(params.Email); err != nil {
-		return domain.UpdateUserParams{}, fmt.Errorf("email is invalid: %w", err)
+		validation.add("email", "invalid_email", "Email указан неверно")
 	}
 
 	if err := validateRolePayloads(params.Role, params.EmployeeInfo, params.AdminInfo, params.StudentInfo, params.GuestInfo); err != nil {
-		return domain.UpdateUserParams{}, fmt.Errorf("role payload is invalid: %w", err)
+		return domain.UpdateUserParams{}, err
+	}
+	addStudentInfoDateValidation(&validation, params.StudentInfo)
+
+	if err := validation.err(); err != nil {
+		return domain.UpdateUserParams{}, err
 	}
 
 	normalizeUserRoleDetailsForUpdate(&params)
@@ -276,23 +282,24 @@ func validateRolePayloads(
 	studentInfo *domain.StudentInfo,
 	guestInfo *domain.GuestInfo,
 ) error {
+	var validation fieldValidationBuilder
 	if role != domain.UserRoleEmployee && employeeInfo != nil {
-		return domain.ErrValidation
+		validation.add("employee_info", "forbidden_for_role", "employee_info можно передавать только для роли employee")
 	}
 
 	if role != domain.UserRoleAdmin && adminInfo != nil {
-		return domain.ErrValidation
+		validation.add("admin_info", "forbidden_for_role", "admin_info можно передавать только для роли admin")
 	}
 
 	if role != domain.UserRoleStudent && studentInfo != nil {
-		return domain.ErrValidation
+		validation.add("student_info", "forbidden_for_role", "student_info можно передавать только для роли student")
 	}
 
 	if role != domain.UserRoleGuest && guestInfo != nil {
-		return domain.ErrValidation
+		validation.add("guest_info", "forbidden_for_role", "guest_info можно передавать только для роли guest")
 	}
 
-	return nil
+	return validation.err()
 }
 
 func normalizeUserRoleDetails(params *domain.CreateUserParams) {
@@ -361,6 +368,23 @@ func validateEmail(value *string) error {
 	}
 
 	return nil
+}
+
+func addStudentInfoDateValidation(validation *fieldValidationBuilder, studentInfo *domain.StudentInfo) {
+	if studentInfo == nil {
+		return
+	}
+	addDateValidation(validation, "birth_date", &studentInfo.BirthDate, "Дата рождения")
+}
+
+func addDateValidation(validation *fieldValidationBuilder, field string, value *string, label string) {
+	if validation == nil || value == nil || strings.TrimSpace(*value) == "" {
+		return
+	}
+
+	if _, err := time.Parse("2006-01-02", strings.TrimSpace(*value)); err != nil {
+		validation.add(field, "invalid_date", label+" должна быть в формате YYYY-MM-DD")
+	}
 }
 
 func normalizeOptionalString(value *string) *string {

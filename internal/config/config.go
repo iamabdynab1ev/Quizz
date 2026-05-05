@@ -36,15 +36,22 @@ type HTTPConfig struct {
 }
 
 type AuthConfig struct {
-	SessionTTL         time.Duration
-	SessionCacheTTL    time.Duration
-	BcryptCost         int
-	LoginMaxAttempts   int
-	LoginAttemptWindow time.Duration
+	SessionTTL      time.Duration
+	SessionCacheTTL time.Duration
+	BcryptCost      int
+	LoginLockout    LoginLockoutConfig
+}
+
+type LoginLockoutConfig struct {
+	Enabled     bool
+	MaxAttempts int
+	Window      time.Duration
+	Scope       string
 }
 
 type GoogleConfig struct {
-	ClientID string
+	ClientID    string
+	DefaultRole string
 }
 
 type UploadConfig struct {
@@ -133,6 +140,21 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("config load auth login attempt window: %w", err)
 	}
 
+	loginLockoutEnabled, err := getBool("AUTH_LOGIN_LOCKOUT_ENABLED", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("config load auth login lockout enabled: %w", err)
+	}
+
+	loginLockoutScope, err := getEnum("AUTH_LOGIN_LOCKOUT_SCOPE", "identifier_ip", []string{"identifier", "ip", "identifier_ip"})
+	if err != nil {
+		return Config{}, fmt.Errorf("config load auth login lockout scope: %w", err)
+	}
+
+	googleDefaultRole, err := getEnum("AUTH_GOOGLE_DEFAULT_ROLE", "student", []string{"admin", "employee", "student", "guest"})
+	if err != nil {
+		return Config{}, fmt.Errorf("config load auth google default role: %w", err)
+	}
+
 	uploadMaxSizeMB, err := getInt("UPLOAD_MAX_SIZE_MB", 20)
 	if err != nil {
 		return Config{}, fmt.Errorf("config load upload max size mb: %w", err)
@@ -199,14 +221,19 @@ func Load() (Config, error) {
 			ShutdownTimeout:    shutdownTimeout,
 		},
 		Auth: AuthConfig{
-			SessionTTL:         sessionTTL,
-			SessionCacheTTL:    sessionCacheTTL,
-			BcryptCost:         bcryptCost,
-			LoginMaxAttempts:   loginMaxAttempts,
-			LoginAttemptWindow: loginAttemptWindow,
+			SessionTTL:      sessionTTL,
+			SessionCacheTTL: sessionCacheTTL,
+			BcryptCost:      bcryptCost,
+			LoginLockout: LoginLockoutConfig{
+				Enabled:     loginLockoutEnabled,
+				MaxAttempts: loginMaxAttempts,
+				Window:      loginAttemptWindow,
+				Scope:       loginLockoutScope,
+			},
 		},
 		Google: GoogleConfig{
-			ClientID: getEnv("GOOGLE_CLIENT_ID", ""),
+			ClientID:    getEnv("GOOGLE_CLIENT_ID", ""),
+			DefaultRole: googleDefaultRole,
 		},
 		Upload: UploadConfig{
 			Dir:          getEnv("UPLOADS_DIR", "uploads"),
@@ -238,6 +265,17 @@ func Load() (Config, error) {
 			},
 		},
 	}, nil
+}
+
+func getEnum(key, fallback string, allowed []string) (string, error) {
+	value := strings.ToLower(getEnv(key, fallback))
+	for _, allowedValue := range allowed {
+		if value == allowedValue {
+			return value, nil
+		}
+	}
+
+	return "", fmt.Errorf("config parse enum %s: %q is not one of %s", key, value, strings.Join(allowed, ", "))
 }
 
 func getRequired(key string) (string, error) {

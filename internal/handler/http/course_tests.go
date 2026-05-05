@@ -33,7 +33,7 @@ func NewCourseTestsHandler(logger *slog.Logger, useCase courseTestUseCase) *Cour
 func (h *CourseTestsHandler) CreateCourseTest(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.CreateCourseTestParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 

@@ -30,7 +30,7 @@ func NewCourseModulesHandler(logger *slog.Logger, useCase courseModuleUseCase) *
 func (h *CourseModulesHandler) CreateCourseModule(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.CreateCourseModuleParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -83,7 +83,7 @@ func (h *CourseModulesHandler) ListCourseModules(w nethttp.ResponseWriter, r *ne
 func (h *CourseModulesHandler) UpdateCourseModule(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.UpdateCourseModuleParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 

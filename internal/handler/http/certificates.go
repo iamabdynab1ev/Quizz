@@ -34,7 +34,7 @@ func NewCertificatesHandler(logger *slog.Logger, useCase certificateUseCase) *Ce
 func (h *CertificatesHandler) CreateCertificate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.CreateCertificateParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 

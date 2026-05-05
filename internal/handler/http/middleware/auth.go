@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"log/slog"
@@ -24,14 +25,14 @@ func RequireAuth(logger *slog.Logger, authenticator Authenticator) func(next net
 		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 			token, ok := extractBearerToken(r.Header.Get("Authorization"))
 			if !ok {
-				nethttp.Error(w, nethttp.StatusText(nethttp.StatusUnauthorized), nethttp.StatusUnauthorized)
+				writeMiddlewareError(w, nethttp.StatusUnauthorized, "unauthorized", "Требуется авторизация")
 				return
 			}
 
 			identity, err := authenticator.Authenticate(r.Context(), token)
 			if err != nil {
-				logger.WarnContext(r.Context(), "auth middleware rejected request", slog.String("error", err.Error()))
-				nethttp.Error(w, nethttp.StatusText(nethttp.StatusUnauthorized), nethttp.StatusUnauthorized)
+				logger.WarnContext(r.Context(), "запрос отклонён middleware авторизации", slog.String("error", err.Error()))
+				writeMiddlewareError(w, nethttp.StatusUnauthorized, "unauthorized", "Сессия недействительна или истекла")
 				return
 			}
 
@@ -60,12 +61,12 @@ func RequireRoles(roles ...domain.UserRole) func(next nethttp.Handler) nethttp.H
 		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 			identity, ok := CurrentAuthIdentity(r.Context())
 			if !ok {
-				nethttp.Error(w, nethttp.StatusText(nethttp.StatusUnauthorized), nethttp.StatusUnauthorized)
+				writeMiddlewareError(w, nethttp.StatusUnauthorized, "unauthorized", "Требуется авторизация")
 				return
 			}
 
 			if _, exists := allowed[identity.User.Role]; !exists {
-				nethttp.Error(w, nethttp.StatusText(nethttp.StatusForbidden), nethttp.StatusForbidden)
+				writeMiddlewareError(w, nethttp.StatusForbidden, "forbidden", "Недостаточно прав")
 				return
 			}
 
@@ -94,4 +95,10 @@ func extractBearerToken(value string) (string, bool) {
 	}
 
 	return token, true
+}
+
+func writeMiddlewareError(w nethttp.ResponseWriter, statusCode int, code string, message string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(statusCode)
+	_, _ = fmt.Fprintf(w, `{"error":%q,"message":%q}`, code, message)
 }

@@ -120,36 +120,41 @@ func (u *CourseUseCase) Archive(ctx context.Context, courseID string) error {
 
 	return nil
 }
-
 func normalizeCreateCourseParams(params domain.CreateCourseParams) (domain.CreateCourseParams, error) {
 	params.CoverImageURL = normalizeOptionalString(params.CoverImageURL)
 	params.VideoURL = normalizeOptionalString(params.VideoURL)
 	params.Category = normalizeOptionalString(params.Category)
 
-	if err := params.Title.ValidateRequired(); err != nil {
-		return domain.CreateCourseParams{}, fmt.Errorf("title is invalid: %w", domain.ErrValidation)
-	}
+	var validation fieldValidationBuilder
+	validation.addRequiredMultiLang("title", params.Title, "Название курса")
 
 	if params.Status == "" {
 		params.Status = domain.CourseStatusDraft
 	}
 
-	params.CertificateEnabled = true
+	if params.CertificateEnabled == nil {
+		params.CertificateEnabled = boolPtr(true)
+	}
+
+	if params.ReviewsEnabled == nil {
+		params.ReviewsEnabled = boolPtr(true)
+	}
 
 	if !params.Status.IsValid() {
-		return domain.CreateCourseParams{}, fmt.Errorf("status is invalid: %w", domain.ErrValidation)
+		validation.add("status", "invalid_enum", "Статус курса должен быть draft, published или archived")
 	}
 
 	if err := normalizePlatforms(&params.Platforms); err != nil {
-		return domain.CreateCourseParams{}, fmt.Errorf("platforms are invalid: %w", err)
+		validation.add("platforms", "invalid_enum", "Платформа должна быть web, mobile или telegram")
 	}
 
 	if params.EstimatedMinutes != nil && *params.EstimatedMinutes <= 0 {
-		return domain.CreateCourseParams{}, fmt.Errorf("estimated_minutes must be greater than zero: %w", domain.ErrValidation)
+		validation.add("estimated_minutes", "must_be_positive", "Длительность курса должна быть больше 0")
 	}
 
-	if params.CertificatePassingScore < 0 || params.CertificatePassingScore > 100 {
-		return domain.CreateCourseParams{}, fmt.Errorf("certificate_passing_score must be in range 0..100: %w", domain.ErrValidation)
+	validation.addIntRange("certificate_passing_score", params.CertificatePassingScore, 0, 100, "Процент для сертификата")
+	if err := validation.err(); err != nil {
+		return domain.CreateCourseParams{}, err
 	}
 
 	return params, nil
@@ -161,28 +166,27 @@ func normalizeUpdateCourseParams(params domain.UpdateCourseParams) (domain.Updat
 	params.VideoURL = normalizeOptionalString(params.VideoURL)
 	params.Category = normalizeOptionalString(params.Category)
 
+	var validation fieldValidationBuilder
 	if params.ID == "" {
-		return domain.UpdateCourseParams{}, fmt.Errorf("id is required: %w", domain.ErrValidation)
+		validation.add("id", "required", "ID курса обязателен")
 	}
-
-	if err := params.Title.ValidateRequired(); err != nil {
-		return domain.UpdateCourseParams{}, fmt.Errorf("title is invalid: %w", domain.ErrValidation)
-	}
+	validation.addRequiredMultiLang("title", params.Title, "Название курса")
 
 	if !params.Status.IsValid() {
-		return domain.UpdateCourseParams{}, fmt.Errorf("status is invalid: %w", domain.ErrValidation)
+		validation.add("status", "invalid_enum", "Статус курса должен быть draft, published или archived")
 	}
 
 	if err := normalizePlatforms(&params.Platforms); err != nil {
-		return domain.UpdateCourseParams{}, fmt.Errorf("platforms are invalid: %w", err)
+		validation.add("platforms", "invalid_enum", "Платформа должна быть web, mobile или telegram")
 	}
 
 	if params.EstimatedMinutes != nil && *params.EstimatedMinutes <= 0 {
-		return domain.UpdateCourseParams{}, fmt.Errorf("estimated_minutes must be greater than zero: %w", domain.ErrValidation)
+		validation.add("estimated_minutes", "must_be_positive", "Длительность курса должна быть больше 0")
 	}
 
-	if params.CertificatePassingScore < 0 || params.CertificatePassingScore > 100 {
-		return domain.UpdateCourseParams{}, fmt.Errorf("certificate_passing_score must be in range 0..100: %w", domain.ErrValidation)
+	validation.addIntRange("certificate_passing_score", params.CertificatePassingScore, 0, 100, "Процент для сертификата")
+	if err := validation.err(); err != nil {
+		return domain.UpdateCourseParams{}, err
 	}
 
 	return params, nil
@@ -250,4 +254,8 @@ func normalizePlatforms(platforms *[]domain.Platform) error {
 
 	*platforms = normalized
 	return nil
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }

@@ -63,9 +63,9 @@ type CreateCourseParams struct {
 	Status                  CourseStatus  `json:"status"`
 	Platforms               []Platform    `json:"platforms"`
 	EstimatedMinutes        *int          `json:"estimated_minutes,omitempty"`
-	CertificateEnabled      bool          `json:"certificate_enabled"`
+	CertificateEnabled      *bool         `json:"certificate_enabled,omitempty"`
 	CertificatePassingScore int           `json:"certificate_passing_score"`
-	ReviewsEnabled          bool          `json:"reviews_enabled"`
+	ReviewsEnabled          *bool         `json:"reviews_enabled,omitempty"`
 }
 
 type UpdateCourseParams struct {
@@ -84,10 +84,11 @@ type UpdateCourseParams struct {
 }
 
 type CourseListFilter struct {
-	Search   string
-	Status   *CourseStatus
-	Category *string
-	Platform *Platform
-	Limit    int
-	Offset   int
+	Search          string
+	Status          *CourseStatus
+	Category        *string
+	Platform        *Platform
+	IncludeArchived bool
+	Limit           int
+	Offset          int
 }

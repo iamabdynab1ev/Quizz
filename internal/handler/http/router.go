@@ -23,6 +23,8 @@ func NewRouter(
 	attemptsHandler *AttemptsHandler,
 	enrollmentsHandler *EnrollmentsHandler,
 	certificatesHandler *CertificatesHandler,
+	dashboardHandler *DashboardHandler,
+	coursePackagesHandler *CoursePackagesHandler,
 	courseTestsHandler *CourseTestsHandler,
 	courseModulesHandler *CourseModulesHandler,
 	contentBlocksHandler *ContentBlocksHandler,
@@ -51,6 +53,7 @@ func NewRouter(
 
 		if authHandler != nil {
 			api.Route("/auth", func(auth chi.Router) {
+				auth.Post("/register", authHandler.Register)
 				auth.Post("/login", authHandler.Login)
 				auth.Get("/google/config", authHandler.GoogleConfig)
 				auth.Post("/google", authHandler.LoginWithGoogle)
@@ -70,7 +73,14 @@ func NewRouter(
 
 			if authHandler != nil {
 				protected.Get("/auth/me", authHandler.Me)
+				protected.Put("/auth/me", authHandler.UpdateMe)
 				protected.Post("/auth/logout", authHandler.Logout)
+			}
+
+			if dashboardHandler != nil {
+				protected.Get("/dashboard", dashboardHandler.GetDashboard)
+				protected.Get("/dashboard/me", dashboardHandler.GetMyDashboard)
+				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Get("/dashboard/admin", dashboardHandler.GetAdminDashboard)
 			}
 
 			if coursesHandler != nil {
@@ -81,6 +91,11 @@ func NewRouter(
 					courses.With(middleware.RequireRoles(domain.UserRoleAdmin)).Put("/{courseID}", coursesHandler.UpdateCourse)
 					courses.With(middleware.RequireRoles(domain.UserRoleAdmin)).Delete("/{courseID}", coursesHandler.ArchiveCourse)
 				})
+			}
+
+			if coursePackagesHandler != nil {
+				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).
+					Post("/course-packages", coursePackagesHandler.CreateCoursePackage)
 			}
 
 			if quizzesHandler != nil {

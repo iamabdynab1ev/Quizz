@@ -73,9 +73,9 @@ func (r *CourseRepository) Create(ctx context.Context, params domain.CreateCours
 		string(params.Status),
 		platformsToStrings(params.Platforms),
 		nullableIntPointerForWrite(params.EstimatedMinutes),
-		params.CertificateEnabled,
+		boolPointerForWrite(params.CertificateEnabled),
 		params.CertificatePassingScore,
-		params.ReviewsEnabled,
+		boolPointerForWrite(params.ReviewsEnabled),
 	).Scan(&courseID); err != nil {
 		return domain.Course{}, wrapPGError("repository postgres courses create", err)
 	}
@@ -183,6 +183,8 @@ func (r *CourseRepository) List(ctx context.Context, filter domain.CourseListFil
 			query.WriteString(fmt.Sprintf(" AND status = $%d", position))
 			args = append(args, string(*filter.Status))
 			position++
+		} else if !filter.IncludeArchived {
+			query.WriteString(" AND status <> 'archived'")
 		}
 
 		if filter.Category != nil {

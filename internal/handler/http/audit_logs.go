@@ -30,7 +30,7 @@ func NewAuditLogsHandler(logger *slog.Logger, useCase auditLogUseCase) *AuditLog
 func (h *AuditLogsHandler) CreateAuditLog(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.CreateAuditLogParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 

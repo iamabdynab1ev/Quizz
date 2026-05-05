@@ -35,7 +35,7 @@ func NewQuizzesHandler(logger *slog.Logger, useCase quizUseCase) *QuizzesHandler
 func (h *QuizzesHandler) CreateQuiz(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.CreateQuizParams
 	if err := decodeJSON(w, r, &params, 2<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -92,7 +92,7 @@ func (h *QuizzesHandler) ListQuizzes(w nethttp.ResponseWriter, r *nethttp.Reques
 func (h *QuizzesHandler) UpdateQuiz(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.UpdateQuizParams
 	if err := decodeJSON(w, r, &params, 2<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -143,6 +143,14 @@ func (h *QuizzesHandler) parseQuizListFilter(r *nethttp.Request) (domain.QuizLis
 	if platformValue := query.Get("platform"); platformValue != "" {
 		platform := domain.Platform(platformValue)
 		filter.Platform = &platform
+	}
+
+	if includeArchivedValue := query.Get("include_archived"); includeArchivedValue != "" {
+		parsed, err := strconv.ParseBool(includeArchivedValue)
+		if err != nil {
+			return domain.QuizListFilter{}, fmt.Errorf("include_archived must be boolean")
+		}
+		filter.IncludeArchived = parsed
 	}
 
 	if limitValue := query.Get("limit"); limitValue != "" {

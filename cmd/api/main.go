@@ -33,7 +33,7 @@ type runtimeFlags struct {
 func main() {
 	if err := run(); err != nil {
 		logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-		logger.Error("api exited with error", slog.String("error", err.Error()))
+		logger.Error("API завершился с ошибкой", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
 }
@@ -54,6 +54,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("main create logger: %w", err)
 	}
+	slog.SetDefault(logger)
 
 	if err := os.MkdirAll(cfg.Upload.Dir, 0o755); err != nil {
 		return fmt.Errorf("main prepare uploads dir: %w", err)
@@ -76,7 +77,7 @@ func run() error {
 			return fmt.Errorf("main migrate up: %w", err)
 		}
 
-		logger.Info("database migrations applied", slog.String("dir", cfg.Migrate.Dir))
+		logger.Info("миграции базы данных применены", slog.String("dir", cfg.Migrate.Dir))
 	}
 
 	healthRepository := postgres.NewHealthRepository(dbPool)
@@ -97,7 +98,7 @@ func run() error {
 			return fmt.Errorf("main bootstrap admin seed: %w", err)
 		}
 
-		logger.Info("bootstrap admin seed completed",
+		logger.Info("стартовый администратор подготовлен",
 			slog.String("user_id", adminUser.ID),
 			slog.String("username", adminUser.Username),
 		)
@@ -116,11 +117,15 @@ func run() error {
 		sessionRepository,
 		sessionCache,
 		cfg.Auth.SessionTTL,
+		cfg.Auth.BcryptCost,
 		loginAttemptRepository,
-		cfg.Auth.LoginMaxAttempts,
-		cfg.Auth.LoginAttemptWindow,
+		cfg.Auth.LoginLockout.Enabled,
+		cfg.Auth.LoginLockout.MaxAttempts,
+		cfg.Auth.LoginLockout.Window,
+		cfg.Auth.LoginLockout.Scope,
 		googleVerifier,
-	)
+		cfg.Google.DefaultRole,
+	).WithAudit(auditLogger)
 	authHandler := httpHandler.NewAuthHandler(logger, authUseCase, cfg.Google.ClientID)
 
 	courseRepository := postgres.NewCourseRepository(dbPool)
@@ -144,6 +149,14 @@ func run() error {
 	certificatesHandler := httpHandler.NewCertificatesHandler(logger, certificateUseCase)
 	enrollmentUseCase.WithCertificateAutoIssuer(certificateUseCase)
 	attemptUseCase.WithEnrollmentLookup(enrollmentRepository).WithCertificateAutoIssuer(certificateUseCase)
+
+	dashboardRepository := postgres.NewDashboardRepository(dbPool)
+	dashboardUseCase := usecase.NewDashboardUseCase(dashboardRepository)
+	dashboardHandler := httpHandler.NewDashboardHandler(logger, dashboardUseCase)
+
+	coursePackageRepository := postgres.NewCoursePackageRepository(dbPool)
+	coursePackageUseCase := usecase.NewCoursePackageUseCase(coursePackageRepository).WithAudit(auditLogger)
+	coursePackagesHandler := httpHandler.NewCoursePackagesHandler(logger, coursePackageUseCase)
 
 	courseTestRepository := postgres.NewCourseTestRepository(dbPool)
 	courseTestUseCase := usecase.NewCourseTestUseCase(courseTestRepository)
@@ -190,6 +203,8 @@ func run() error {
 		attemptsHandler,
 		enrollmentsHandler,
 		certificatesHandler,
+		dashboardHandler,
+		coursePackagesHandler,
 		courseTestsHandler,
 		courseModulesHandler,
 		contentBlocksHandler,
@@ -214,7 +229,7 @@ func run() error {
 	serverErrCh := make(chan error, 1)
 
 	go func() {
-		logger.Info("http server starting",
+		logger.Info("HTTP сервер запускается",
 			slog.String("service", cfg.App.Name),
 			slog.String("env", cfg.App.Env),
 			slog.String("address", cfg.HTTP.Address),
@@ -240,13 +255,13 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
 	defer cancel()
 
-	logger.Info("http server shutting down", slog.String("service", cfg.App.Name))
+	logger.Info("HTTP сервер останавливается", slog.String("service", cfg.App.Name))
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("main shutdown server: %w", err)
 	}
 
-	logger.Info("http server stopped", slog.String("service", cfg.App.Name))
+	logger.Info("HTTP сервер остановлен", slog.String("service", cfg.App.Name))
 
 	return nil
 }
@@ -296,7 +311,9 @@ func newLogger(levelText string) (*slog.Logger, error) {
 		return nil, fmt.Errorf("main parse log level: %w", err)
 	}
 
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})), nil
+	return slog.New(russianLogHandler{
+		Handler: slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}),
+	}), nil
 }
 
 func parseFlags() runtimeFlags {

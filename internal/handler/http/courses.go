@@ -35,7 +35,7 @@ func NewCoursesHandler(logger *slog.Logger, useCase courseUseCase) *CoursesHandl
 func (h *CoursesHandler) CreateCourse(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.CreateCourseParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -92,7 +92,7 @@ func (h *CoursesHandler) ListCourses(w nethttp.ResponseWriter, r *nethttp.Reques
 func (h *CoursesHandler) UpdateCourse(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.UpdateCourseParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -143,6 +143,14 @@ func (h *CoursesHandler) parseCourseListFilter(r *nethttp.Request) (domain.Cours
 	if platformValue := query.Get("platform"); platformValue != "" {
 		platform := domain.Platform(platformValue)
 		filter.Platform = &platform
+	}
+
+	if includeArchivedValue := query.Get("include_archived"); includeArchivedValue != "" {
+		parsed, err := strconv.ParseBool(includeArchivedValue)
+		if err != nil {
+			return domain.CourseListFilter{}, fmt.Errorf("include_archived must be boolean")
+		}
+		filter.IncludeArchived = parsed
 	}
 
 	if limitValue := query.Get("limit"); limitValue != "" {

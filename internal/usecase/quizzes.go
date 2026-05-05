@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -124,29 +125,26 @@ func (u *QuizUseCase) Archive(ctx context.Context, quizID string) error {
 func normalizeCreateQuizParams(params domain.CreateQuizParams) (domain.CreateQuizParams, error) {
 	params.Category = normalizeOptionalString(params.Category)
 
-	if err := params.Title.ValidateRequired(); err != nil {
-		return domain.CreateQuizParams{}, fmt.Errorf("title is invalid: %w", domain.ErrValidation)
-	}
+	var validation fieldValidationBuilder
+	validation.addRequiredMultiLang("title", params.Title, "Название теста")
 
 	if params.Status == "" {
 		params.Status = domain.QuizStatusDraft
 	}
 
 	if !params.Status.IsValid() {
-		return domain.CreateQuizParams{}, fmt.Errorf("status is invalid: %w", domain.ErrValidation)
+		validation.add("status", "invalid_enum", "Статус теста должен быть draft, published или archived")
 	}
 
 	if err := normalizePlatforms(&params.Platforms); err != nil {
-		return domain.CreateQuizParams{}, fmt.Errorf("platforms are invalid: %w", err)
+		validation.add("platforms", "invalid_enum", "Платформа должна быть web, mobile или telegram")
 	}
 
 	if params.TimeLimitMinutes != nil && *params.TimeLimitMinutes <= 0 {
-		return domain.CreateQuizParams{}, fmt.Errorf("time_limit_minutes must be greater than zero: %w", domain.ErrValidation)
+		validation.add("time_limit_minutes", "must_be_positive", "Лимит времени должен быть больше 0")
 	}
 
-	if params.PassingScore < 0 || params.PassingScore > 100 {
-		return domain.CreateQuizParams{}, fmt.Errorf("passing_score must be in range 0..100: %w", domain.ErrValidation)
-	}
+	validation.addIntRange("passing_score", params.PassingScore, 0, 100, "Процент прохождения")
 
 	if params.MaxAttempts <= 0 {
 		params.MaxAttempts = 3
@@ -154,7 +152,11 @@ func normalizeCreateQuizParams(params domain.CreateQuizParams) (domain.CreateQui
 
 	questions, err := normalizeQuestionPayloads(params.Questions)
 	if err != nil {
-		return domain.CreateQuizParams{}, fmt.Errorf("questions are invalid: %w", err)
+		return domain.CreateQuizParams{}, err
+	}
+
+	if err := validation.err(); err != nil {
+		return domain.CreateQuizParams{}, err
 	}
 	params.Questions = questions
 
@@ -165,37 +167,37 @@ func normalizeUpdateQuizParams(params domain.UpdateQuizParams) (domain.UpdateQui
 	params.ID = strings.TrimSpace(params.ID)
 	params.Category = normalizeOptionalString(params.Category)
 
+	var validation fieldValidationBuilder
 	if params.ID == "" {
-		return domain.UpdateQuizParams{}, fmt.Errorf("id is required: %w", domain.ErrValidation)
+		validation.add("id", "required", "ID теста обязателен")
 	}
-
-	if err := params.Title.ValidateRequired(); err != nil {
-		return domain.UpdateQuizParams{}, fmt.Errorf("title is invalid: %w", domain.ErrValidation)
-	}
+	validation.addRequiredMultiLang("title", params.Title, "Название теста")
 
 	if !params.Status.IsValid() {
-		return domain.UpdateQuizParams{}, fmt.Errorf("status is invalid: %w", domain.ErrValidation)
+		validation.add("status", "invalid_enum", "Статус теста должен быть draft, published или archived")
 	}
 
 	if err := normalizePlatforms(&params.Platforms); err != nil {
-		return domain.UpdateQuizParams{}, fmt.Errorf("platforms are invalid: %w", err)
+		validation.add("platforms", "invalid_enum", "Платформа должна быть web, mobile или telegram")
 	}
 
 	if params.TimeLimitMinutes != nil && *params.TimeLimitMinutes <= 0 {
-		return domain.UpdateQuizParams{}, fmt.Errorf("time_limit_minutes must be greater than zero: %w", domain.ErrValidation)
+		validation.add("time_limit_minutes", "must_be_positive", "Лимит времени должен быть больше 0")
 	}
 
-	if params.PassingScore < 0 || params.PassingScore > 100 {
-		return domain.UpdateQuizParams{}, fmt.Errorf("passing_score must be in range 0..100: %w", domain.ErrValidation)
-	}
+	validation.addIntRange("passing_score", params.PassingScore, 0, 100, "Процент прохождения")
 
 	if params.MaxAttempts <= 0 {
-		return domain.UpdateQuizParams{}, fmt.Errorf("max_attempts must be greater than zero: %w", domain.ErrValidation)
+		validation.add("max_attempts", "must_be_positive", "Количество попыток должно быть больше 0")
 	}
 
 	questions, err := normalizeQuestionPayloads(params.Questions)
 	if err != nil {
-		return domain.UpdateQuizParams{}, fmt.Errorf("questions are invalid: %w", err)
+		return domain.UpdateQuizParams{}, err
+	}
+
+	if err := validation.err(); err != nil {
+		return domain.UpdateQuizParams{}, err
 	}
 	params.Questions = questions
 
@@ -250,21 +252,26 @@ func normalizeQuestionPayloads(questions []domain.QuestionPayload) ([]domain.Que
 	positions := make(map[int]struct{}, len(questions))
 
 	for index, question := range questions {
+		fieldPrefix := fmt.Sprintf("questions.%d", index)
 		if question.Position <= 0 {
 			question.Position = index + 1
 		}
 
 		if _, exists := positions[question.Position]; exists {
-			return nil, fmt.Errorf("duplicate question position: %w", domain.ErrValidation)
+			return nil, domain.FieldValidationError("Проверьте поля формы",
+				domain.ValidationField(fieldPrefix+".position", "duplicate", "Позиция вопроса не должна повторяться"))
 		}
 		positions[question.Position] = struct{}{}
 
 		if !question.Type.IsValid() {
-			return nil, fmt.Errorf("question type is invalid: %w", domain.ErrValidation)
+			return nil, domain.FieldValidationError("Проверьте поля формы",
+				domain.ValidationField(fieldPrefix+".type", "invalid_enum", "Тип вопроса не поддерживается"))
 		}
 
-		if err := question.Prompt.ValidateRequired(); err != nil {
-			return nil, fmt.Errorf("question prompt is invalid: %w", domain.ErrValidation)
+		var validation fieldValidationBuilder
+		validation.addRequiredMultiLang(fieldPrefix+".prompt", question.Prompt, "Текст вопроса")
+		if err := validation.err(); err != nil {
+			return nil, err
 		}
 
 		if question.Points <= 0 {
@@ -275,8 +282,85 @@ func normalizeQuestionPayloads(questions []domain.QuestionPayload) ([]domain.Que
 			question.Config = []byte("{}")
 		}
 
+		if err := validateQuestionConfig(fieldPrefix+".config", question.Type, question.Config); err != nil {
+			return nil, err
+		}
+
 		normalized = append(normalized, question)
 	}
 
 	return normalized, nil
+}
+
+func validateQuestionConfig(field string, questionType domain.QuestionType, config []byte) error {
+	var payload struct {
+		Options []struct {
+			ID        string `json:"id"`
+			IsCorrect bool   `json:"is_correct"`
+		} `json:"options"`
+		Correct         *bool    `json:"correct"`
+		AcceptedAnswers []string `json:"accepted_answers"`
+	}
+
+	if err := json.Unmarshal(config, &payload); err != nil {
+		return domain.FieldValidationError("Проверьте поля формы",
+			domain.ValidationField(field, "invalid_json", "Настройки вопроса должны быть корректным JSON"))
+	}
+
+	var validation fieldValidationBuilder
+	switch questionType {
+	case domain.QuestionTypeSingleChoice, domain.QuestionTypeImageChoice:
+		correctCount, optionsOK := validateChoiceOptions(payload.Options)
+		if !optionsOK {
+			validation.add(field+".options", "required", "Добавьте варианты ответа с ID")
+		}
+		if correctCount != 1 {
+			validation.add(field+".options", "invalid_correct_count", "Для этого типа вопроса должен быть ровно один правильный ответ")
+		}
+	case domain.QuestionTypeMultipleChoice:
+		correctCount, optionsOK := validateChoiceOptions(payload.Options)
+		if !optionsOK {
+			validation.add(field+".options", "required", "Добавьте варианты ответа с ID")
+		}
+		if correctCount < 1 {
+			validation.add(field+".options", "invalid_correct_count", "Отметьте минимум один правильный ответ")
+		}
+	case domain.QuestionTypeTrueFalse:
+		if payload.Correct == nil {
+			validation.add(field+".correct", "required", "Укажите правильное значение true или false")
+		}
+	case domain.QuestionTypeShortAnswer, domain.QuestionTypeFillBlank:
+		if len(normalizeStringSlice(payload.AcceptedAnswers)) == 0 {
+			validation.add(field+".accepted_answers", "required", "Добавьте минимум один правильный текстовый ответ")
+		}
+	}
+
+	return validation.err()
+}
+
+func validateChoiceOptions(options []struct {
+	ID        string `json:"id"`
+	IsCorrect bool   `json:"is_correct"`
+}) (int, bool) {
+	if len(options) == 0 {
+		return 0, false
+	}
+
+	correctCount := 0
+	seenIDs := make(map[string]struct{}, len(options))
+	for _, option := range options {
+		id := strings.TrimSpace(option.ID)
+		if id == "" {
+			return correctCount, false
+		}
+		if _, exists := seenIDs[id]; exists {
+			return correctCount, false
+		}
+		seenIDs[id] = struct{}{}
+		if option.IsCorrect {
+			correctCount++
+		}
+	}
+
+	return correctCount, true
 }

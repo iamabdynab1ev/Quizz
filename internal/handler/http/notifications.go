@@ -31,7 +31,7 @@ func NewNotificationsHandler(logger *slog.Logger, useCase notificationUseCase) *
 func (h *NotificationsHandler) CreateNotification(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.CreateNotificationParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 

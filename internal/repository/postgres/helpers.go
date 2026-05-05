@@ -50,6 +50,14 @@ func nullableTimePointerForWrite(value *time.Time) any {
 	return *value
 }
 
+func boolPointerForWrite(value *bool) any {
+	if value == nil {
+		return false
+	}
+
+	return *value
+}
+
 func optionalString(value sql.NullString) *string {
 	if !value.Valid {
 		return nil
@@ -89,7 +97,7 @@ func dateString(value sql.NullTime) string {
 		return ""
 	}
 
-	return value.Time.UTC().Format("2006-01-02")
+	return value.Time.Format("2006-01-02")
 }
 
 func toJSONValue(value driver.Valuer) (any, error) {

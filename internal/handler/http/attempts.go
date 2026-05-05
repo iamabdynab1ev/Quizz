@@ -41,7 +41,7 @@ func NewAttemptsHandler(logger *slog.Logger, useCase attemptUseCase) *AttemptsHa
 func (h *AttemptsHandler) SubmitAttempt(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var request submitAttemptRequest
 	if err := decodeJSON(w, r, &request, 2<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -135,7 +135,7 @@ func (h *AttemptsHandler) ReviewAttempt(w nethttp.ResponseWriter, r *nethttp.Req
 		Scores  []domain.AttemptReviewScore `json:"scores,omitempty"`
 	}
 	if err := decodeJSON(w, r, &request, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 

@@ -56,12 +56,18 @@ func (u *CourseTestUseCase) Delete(ctx context.Context, courseID, moduleID, quiz
 	moduleID = strings.TrimSpace(moduleID)
 	quizID = strings.TrimSpace(quizID)
 
+	var validation fieldValidationBuilder
 	if (courseID == "" && moduleID == "") || (courseID != "" && moduleID != "") {
-		return fmt.Errorf("usecase course tests delete target: %w", domain.ErrValidation)
+		validation.add("course_id", "invalid_target", "Передайте course_id или module_id")
+		validation.add("module_id", "invalid_target", "Передайте course_id или module_id")
 	}
 
 	if quizID == "" {
-		return fmt.Errorf("usecase course tests delete quiz id: %w", domain.ErrValidation)
+		validation.add("quiz_id", "required", "ID теста обязателен")
+	}
+
+	if err := validation.err(); err != nil {
+		return fmt.Errorf("usecase course tests delete target: %w", err)
 	}
 
 	if err := u.repository.Delete(ctx, courseID, moduleID, quizID); err != nil {
@@ -74,7 +80,8 @@ func (u *CourseTestUseCase) Delete(ctx context.Context, courseID, moduleID, quiz
 func (u *CourseTestUseCase) DeleteByID(ctx context.Context, courseTestID string) error {
 	courseTestID = strings.TrimSpace(courseTestID)
 	if courseTestID == "" {
-		return fmt.Errorf("usecase course tests delete by id: %w", domain.ErrValidation)
+		return fmt.Errorf("usecase course tests delete by id: %w", domain.FieldValidationError("Проверьте поля формы",
+			domain.ValidationField("id", "required", "ID связи курса и теста обязателен")))
 	}
 
 	if err := u.repository.DeleteByID(ctx, courseTestID); err != nil {
@@ -95,16 +102,22 @@ func normalizeCreateCourseTestParams(params domain.CreateCourseTestParams) (doma
 
 	params.QuizID = strings.TrimSpace(params.QuizID)
 
+	var validation fieldValidationBuilder
 	if (params.CourseID == nil && params.ModuleID == nil) || (params.CourseID != nil && params.ModuleID != nil) {
-		return domain.CreateCourseTestParams{}, fmt.Errorf("exactly one of course_id or module_id is required: %w", domain.ErrValidation)
+		validation.add("course_id", "invalid_target", "Передайте course_id или module_id")
+		validation.add("module_id", "invalid_target", "Передайте course_id или module_id")
 	}
 
 	if params.QuizID == "" {
-		return domain.CreateCourseTestParams{}, fmt.Errorf("quiz_id is required: %w", domain.ErrValidation)
+		validation.add("quiz_id", "required", "ID теста обязателен")
 	}
 
 	if params.Position <= 0 {
 		params.Position = 1
+	}
+
+	if err := validation.err(); err != nil {
+		return domain.CreateCourseTestParams{}, err
 	}
 
 	return params, nil
@@ -120,7 +133,9 @@ func normalizeCourseTestListFilter(filter domain.CourseTestListFilter) (domain.C
 	}
 
 	if filter.CourseID != nil && filter.ModuleID != nil {
-		return domain.CourseTestListFilter{}, fmt.Errorf("only one of course_id or module_id is allowed: %w", domain.ErrValidation)
+		return domain.CourseTestListFilter{}, domain.FieldValidationError("Проверьте параметры запроса",
+			domain.ValidationField("course_id", "mutually_exclusive", "Передайте только course_id или только module_id"),
+			domain.ValidationField("module_id", "mutually_exclusive", "Передайте только course_id или только module_id"))
 	}
 
 	return filter, nil

@@ -29,7 +29,7 @@ func RequestLogger(logger *slog.Logger) func(next nethttp.Handler) nethttp.Handl
 
 			next.ServeHTTP(writer, r)
 
-			logger.InfoContext(r.Context(), "http request completed",
+			logger.InfoContext(r.Context(), "HTTP запрос обработан",
 				slog.String("request_id", chimiddleware.GetReqID(r.Context())),
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),

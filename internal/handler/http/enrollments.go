@@ -39,7 +39,7 @@ func NewEnrollmentsHandler(logger *slog.Logger, useCase enrollmentUseCase) *Enro
 func (h *EnrollmentsHandler) CreateEnrollment(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var request createEnrollmentRequest
 	if err := decodeJSON(w, r, &request, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 

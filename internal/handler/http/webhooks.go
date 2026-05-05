@@ -73,7 +73,7 @@ func toWebhookResponse(webhook domain.Webhook, includeSecret bool) webhookRespon
 func (h *WebhooksHandler) CreateWebhook(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.CreateWebhookParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -135,7 +135,7 @@ func (h *WebhooksHandler) ListWebhooks(w nethttp.ResponseWriter, r *nethttp.Requ
 func (h *WebhooksHandler) UpdateWebhook(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.UpdateWebhookParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 

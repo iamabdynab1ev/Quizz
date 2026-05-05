@@ -19,6 +19,7 @@ type authUserRepository interface {
 	GetByGoogleID(ctx context.Context, googleID string) (domain.User, error)
 	LinkGoogleID(ctx context.Context, userID, googleID string) (domain.User, error)
 	Create(ctx context.Context, params domain.CreateUserParams) (domain.User, error)
+	Update(ctx context.Context, params domain.UpdateUserParams) (domain.User, error)
 }
 
 type authSessionRepository interface {
@@ -35,20 +36,25 @@ type authSessionCache interface {
 }
 
 type authLoginAttemptRepository interface {
-	CountRecentFailed(ctx context.Context, identifier string, ipAddress *string, since time.Time) (int, error)
+	CountRecentFailed(ctx context.Context, identifier string, ipAddress *string, scope string, since time.Time) (int, error)
 	Record(ctx context.Context, identifier string, ipAddress *string, succeeded bool) error
 }
 
 type AuthUseCase struct {
-	users              authUserRepository
-	sessions           authSessionRepository
-	sessionCache       authSessionCache
-	loginAttempts      authLoginAttemptRepository
-	sessionTTL         time.Duration
-	maxLoginAttempts   int
-	loginAttemptWindow time.Duration
-	google             googleTokenVerifier
-	now                func() time.Time
+	users               authUserRepository
+	sessions            authSessionRepository
+	sessionCache        authSessionCache
+	loginAttempts       authLoginAttemptRepository
+	sessionTTL          time.Duration
+	bcryptCost          int
+	loginLockoutEnabled bool
+	maxLoginAttempts    int
+	loginAttemptWindow  time.Duration
+	loginLockoutScope   string
+	google              googleTokenVerifier
+	googleDefaultRole   domain.UserRole
+	audit               *AuditLogger
+	now                 func() time.Time
 }
 
 func NewAuthUseCase(
@@ -56,22 +62,90 @@ func NewAuthUseCase(
 	sessions authSessionRepository,
 	sessionCache authSessionCache,
 	sessionTTL time.Duration,
+	bcryptCost int,
 	loginAttempts authLoginAttemptRepository,
+	loginLockoutEnabled bool,
 	maxLoginAttempts int,
 	loginAttemptWindow time.Duration,
+	loginLockoutScope string,
 	google googleTokenVerifier,
+	googleDefaultRole string,
 ) *AuthUseCase {
 	return &AuthUseCase{
-		users:              users,
-		sessions:           sessions,
-		sessionCache:       sessionCache,
-		loginAttempts:      loginAttempts,
-		sessionTTL:         sessionTTL,
-		maxLoginAttempts:   maxLoginAttempts,
-		loginAttemptWindow: loginAttemptWindow,
-		google:             google,
-		now:                time.Now,
+		users:               users,
+		sessions:            sessions,
+		sessionCache:        sessionCache,
+		loginAttempts:       loginAttempts,
+		sessionTTL:          sessionTTL,
+		bcryptCost:          bcryptCost,
+		loginLockoutEnabled: loginLockoutEnabled,
+		maxLoginAttempts:    maxLoginAttempts,
+		loginAttemptWindow:  loginAttemptWindow,
+		loginLockoutScope:   normalizeLoginLockoutScope(loginLockoutScope),
+		google:              google,
+		googleDefaultRole:   normalizeGoogleDefaultRole(googleDefaultRole),
+		now:                 time.Now,
 	}
+}
+
+func (u *AuthUseCase) WithAudit(audit *AuditLogger) *AuthUseCase {
+	u.audit = audit
+	return u
+}
+
+func (u *AuthUseCase) Register(ctx context.Context, params domain.RegisterParams) (domain.LoginResult, error) {
+	normalized, err := normalizeRegisterParams(params)
+	if err != nil {
+		return domain.LoginResult{}, fmt.Errorf("usecase auth register: %w", err)
+	}
+
+	passwordHash, err := hashPassword(normalized.Password, u.bcryptCost)
+	if err != nil {
+		return domain.LoginResult{}, fmt.Errorf("usecase auth register hash password: %w", err)
+	}
+
+	email := normalized.Email
+	passwordHashPtr := passwordHash
+	user, err := u.users.Create(ctx, domain.CreateUserParams{
+		Username:     fallbackAuthUsername(normalized.Username, &email),
+		Email:        &email,
+		PasswordHash: &passwordHashPtr,
+		Role:         domain.UserRoleStudent,
+		FirstName:    normalized.FirstName,
+		LastName:     normalized.LastName,
+		Patronymic:   normalized.Patronymic,
+		Phone:        normalized.Phone,
+		Gender:       normalized.Gender,
+		Address:      normalized.Address,
+		City:         normalized.City,
+		AvatarURL:    normalized.AvatarURL,
+		StudentInfo: &domain.StudentInfo{
+			BirthDate: stringFromPointer(normalized.BirthDate),
+		},
+	})
+	if err != nil {
+		if errors.Is(err, domain.ErrConflict) {
+			return domain.LoginResult{}, domain.ConflictError("Пользователь с таким email или логином уже существует")
+		}
+		return domain.LoginResult{}, fmt.Errorf("usecase auth register create user: %w", err)
+	}
+
+	if u.audit != nil {
+		u.audit.Log(ctx, domain.AppEventUserCreated, map[string]any{
+			"user_id":  user.ID,
+			"username": user.Username,
+			"role":     user.Role,
+			"source":   "register",
+		})
+	}
+
+	session, err := u.createSession(ctx, user.ID, normalized.IPAddress, normalized.UserAgent)
+	if err != nil {
+		return domain.LoginResult{}, fmt.Errorf("usecase auth register create session: %w", err)
+	}
+
+	u.cacheIdentity(session.Token, user, session)
+	return loginResultFromSession(user, session), nil
 }
 
 func (u *AuthUseCase) Login(ctx context.Context, params domain.LoginParams) (domain.LoginResult, error) {
@@ -90,22 +164,22 @@ func (u *AuthUseCase) Login(ctx context.Context, params domain.LoginParams) (dom
 	user, err := u.users.GetByLogin(ctx, normalized.Identifier)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return domain.LoginResult{}, fmt.Errorf("usecase auth login: %w", domain.ErrUnauthorized)
+			return domain.LoginResult{}, domain.UnauthorizedError("Неверный логин или пароль")
 		}
 
 		return domain.LoginResult{}, fmt.Errorf("usecase auth login get user: %w", err)
 	}
 
 	if !user.IsActive {
-		return domain.LoginResult{}, fmt.Errorf("usecase auth login inactive user: %w", domain.ErrUnauthorized)
+		return domain.LoginResult{}, domain.UnauthorizedError("Пользователь отключен")
 	}
 
 	if user.PasswordHash == nil {
-		return domain.LoginResult{}, fmt.Errorf("usecase auth login missing password hash: %w", domain.ErrUnauthorized)
+		return domain.LoginResult{}, domain.UnauthorizedError("Для этого аккаунта вход по паролю недоступен")
 	}
 
 	if err := comparePasswordHash(*user.PasswordHash, normalized.Password); err != nil {
-		return domain.LoginResult{}, fmt.Errorf("usecase auth login compare password: %w", domain.ErrUnauthorized)
+		return domain.LoginResult{}, domain.UnauthorizedError("Неверный логин или пароль")
 	}
 
 	token, err := generateSessionToken()
@@ -142,7 +216,7 @@ func (u *AuthUseCase) LoginWithGoogle(ctx context.Context, params domain.GoogleL
 	}
 
 	if u.google == nil {
-		return domain.LoginResult{}, fmt.Errorf("usecase auth google login: %w", domain.UnavailableError("google sign-in is not configured"))
+		return domain.LoginResult{}, fmt.Errorf("usecase auth google login: %w", domain.UnavailableError("Вход через Google не настроен"))
 	}
 
 	identity, err := u.google.VerifyIDToken(ctx, normalized.IDToken)
@@ -227,6 +301,49 @@ func (u *AuthUseCase) Logout(ctx context.Context, token string) error {
 	return nil
 }
 
+func (u *AuthUseCase) UpdateProfile(ctx context.Context, params domain.UpdateProfileParams) (domain.User, error) {
+	normalized, err := normalizeUpdateProfileParams(params)
+	if err != nil {
+		return domain.User{}, fmt.Errorf("usecase auth update profile: %w", err)
+	}
+
+	current, err := u.users.GetByID(ctx, normalized.UserID)
+	if err != nil {
+		return domain.User{}, fmt.Errorf("usecase auth update profile get current user: %w", err)
+	}
+
+	update := profileUpdateToUserParams(current, normalized)
+	if update.Password != nil {
+		passwordHash, err := hashPassword(*update.Password, u.bcryptCost)
+		if err != nil {
+			return domain.User{}, fmt.Errorf("usecase auth update profile hash password: %w", err)
+		}
+		update.PasswordHash = &passwordHash
+	}
+
+	user, err := u.users.Update(ctx, update)
+	if err != nil {
+		return domain.User{}, fmt.Errorf("usecase auth update profile save: %w", err)
+	}
+
+	if u.audit != nil {
+		u.audit.Log(ctx, domain.AppEventUserUpdated, map[string]any{
+			"user_id":  user.ID,
+			"username": user.Username,
+			"source":   "profile",
+		})
+	}
+
+	if normalized.SessionToken != "" && u.sessionCache != nil {
+		if identity, ok := u.getCachedIdentity(normalized.SessionToken); ok {
+			identity.User = user
+			u.sessionCache.Set(normalized.SessionToken, identity, identity.Session.ExpiresAt)
+		}
+	}
+
+	return user, nil
+}
+
 func (u *AuthUseCase) resolveGoogleUser(ctx context.Context, identity GoogleIdentity) (domain.User, error) {
 	user, err := u.users.GetByGoogleID(ctx, identity.Subject)
 	if err == nil {
@@ -240,7 +357,7 @@ func (u *AuthUseCase) resolveGoogleUser(ctx context.Context, identity GoogleIden
 	user, err = u.users.GetByEmail(ctx, identity.Email)
 	if err == nil {
 		if user.GoogleID != nil && *user.GoogleID != identity.Subject {
-			return domain.User{}, domain.ConflictError("google account is already linked to another identity")
+			return domain.User{}, domain.ConflictError("Этот Google-аккаунт уже привязан к другому пользователю")
 		}
 
 		linkedUser, err := u.users.LinkGoogleID(ctx, user.ID, identity.Subject)
@@ -264,7 +381,7 @@ func (u *AuthUseCase) resolveGoogleUser(ctx context.Context, identity GoogleIden
 		Username:  username,
 		Email:     &email,
 		GoogleID:  &googleID,
-		Role:      domain.UserRoleGuest,
+		Role:      u.googleDefaultRole,
 		FirstName: identity.GivenName,
 		LastName:  identity.FamilyName,
 		Gender:    domain.GenderUnspecified,
@@ -275,6 +392,15 @@ func (u *AuthUseCase) resolveGoogleUser(ctx context.Context, identity GoogleIden
 	}
 
 	return createdUser, nil
+}
+
+func normalizeGoogleDefaultRole(role string) domain.UserRole {
+	normalized := domain.UserRole(strings.ToLower(strings.TrimSpace(role)))
+	if normalized.IsValid() {
+		return normalized
+	}
+
+	return domain.UserRoleStudent
 }
 
 func (u *AuthUseCase) createSession(
@@ -344,7 +470,94 @@ func normalizeGoogleLoginParams(params domain.GoogleLoginParams) (domain.GoogleL
 	params.UserAgent = normalizeOptionalString(params.UserAgent)
 
 	if params.IDToken == "" {
-		return domain.GoogleLoginParams{}, fmt.Errorf("id_token is required: %w", domain.ErrValidation)
+		return domain.GoogleLoginParams{}, domain.FieldValidationError("Проверьте поля формы",
+			domain.ValidationField("id_token", "required", "Google ID token обязателен"))
+	}
+
+	return params, nil
+}
+
+func normalizeRegisterParams(params domain.RegisterParams) (domain.RegisterParams, error) {
+	params.Username = strings.TrimSpace(params.Username)
+	params.Email = strings.TrimSpace(strings.ToLower(params.Email))
+	params.Password = strings.TrimSpace(params.Password)
+	params.FirstName = strings.TrimSpace(params.FirstName)
+	params.LastName = strings.TrimSpace(params.LastName)
+	params.Patronymic = strings.TrimSpace(params.Patronymic)
+	params.Phone = normalizeOptionalString(params.Phone)
+	params.Address = normalizeOptionalString(params.Address)
+	params.City = normalizeOptionalString(params.City)
+	params.AvatarURL = normalizeOptionalString(params.AvatarURL)
+	params.BirthDate = normalizeOptionalString(params.BirthDate)
+	params.IPAddress = normalizeOptionalString(params.IPAddress)
+	params.UserAgent = normalizeOptionalString(params.UserAgent)
+
+	var validation fieldValidationBuilder
+	validation.addRequired("email", params.Email, "Email")
+	validation.addRequired("password", params.Password, "Пароль")
+	validation.addRequired("first_name", params.FirstName, "Имя")
+	validation.addRequired("last_name", params.LastName, "Фамилия")
+
+	if params.Email != "" {
+		emailCopy := params.Email
+		if err := validateEmail(&emailCopy); err != nil {
+			validation.add("email", "invalid_email", "Email указан неверно")
+		}
+	}
+
+	if params.Password != "" && len(params.Password) < 8 {
+		validation.add("password", "too_short", "Пароль должен быть минимум 8 символов")
+	}
+
+	if params.Gender == "" {
+		params.Gender = domain.GenderUnspecified
+	}
+	if !params.Gender.IsValid() {
+		validation.add("gender", "invalid_enum", "Пол должен быть male, female, other или unspecified")
+	}
+
+	addDateValidation(&validation, "birth_date", params.BirthDate, "Дата рождения")
+
+	if err := validation.err(); err != nil {
+		return domain.RegisterParams{}, err
+	}
+
+	return params, nil
+}
+
+func normalizeUpdateProfileParams(params domain.UpdateProfileParams) (domain.UpdateProfileParams, error) {
+	params.UserID = strings.TrimSpace(params.UserID)
+	params.SessionToken = strings.TrimSpace(params.SessionToken)
+	params.Email = normalizeOptionalString(params.Email)
+	params.Password = normalizeOptionalString(params.Password)
+	params.FirstName = strings.TrimSpace(params.FirstName)
+	params.LastName = strings.TrimSpace(params.LastName)
+	params.Patronymic = strings.TrimSpace(params.Patronymic)
+	params.Phone = normalizeOptionalString(params.Phone)
+	params.Address = normalizeOptionalString(params.Address)
+	params.City = normalizeOptionalString(params.City)
+	params.AvatarURL = normalizeOptionalString(params.AvatarURL)
+	params.BirthDate = normalizeOptionalString(params.BirthDate)
+
+	var validation fieldValidationBuilder
+	validation.addRequired("user_id", params.UserID, "ID пользователя")
+
+	if params.Email != nil {
+		if err := validateEmail(params.Email); err != nil {
+			validation.add("email", "invalid_email", "Email указан неверно")
+		}
+	}
+	if params.Password != nil && len(*params.Password) < 8 {
+		validation.add("password", "too_short", "Пароль должен быть минимум 8 символов")
+	}
+	if params.Gender != "" && !params.Gender.IsValid() {
+		validation.add("gender", "invalid_enum", "Пол должен быть male, female, other или unspecified")
+	}
+
+	addDateValidation(&validation, "birth_date", params.BirthDate, "Дата рождения")
+
+	if err := validation.err(); err != nil {
+		return domain.UpdateProfileParams{}, err
 	}
 
 	return params, nil
@@ -411,15 +624,98 @@ func normalizeLoginParams(params domain.LoginParams) (domain.LoginParams, error)
 	params.IPAddress = normalizeOptionalString(params.IPAddress)
 	params.UserAgent = normalizeOptionalString(params.UserAgent)
 
+	var validation fieldValidationBuilder
 	if params.Identifier == "" {
-		return domain.LoginParams{}, fmt.Errorf("identifier is required: %w", domain.ErrValidation)
+		validation.add("identifier", "required", "Email или логин обязателен")
 	}
 
 	if params.Password == "" {
-		return domain.LoginParams{}, fmt.Errorf("password is required: %w", domain.ErrValidation)
+		validation.add("password", "required", "Пароль обязателен")
+	}
+
+	if err := validation.err(); err != nil {
+		return domain.LoginParams{}, err
 	}
 
 	return params, nil
+}
+
+func profileUpdateToUserParams(current domain.User, params domain.UpdateProfileParams) domain.UpdateUserParams {
+	email := current.Email
+	if params.Email != nil {
+		email = params.Email
+	}
+
+	gender := current.Gender
+	if params.Gender != "" {
+		gender = params.Gender
+	}
+
+	studentInfo := current.StudentInfo
+	if current.Role == domain.UserRoleStudent {
+		if studentInfo == nil {
+			studentInfo = &domain.StudentInfo{}
+		}
+		copied := *studentInfo
+		if params.BirthDate != nil {
+			copied.BirthDate = *params.BirthDate
+		}
+		studentInfo = &copied
+	}
+
+	return domain.UpdateUserParams{
+		ID:           current.ID,
+		Username:     current.Username,
+		Email:        email,
+		GoogleID:     current.GoogleID,
+		Password:     params.Password,
+		Role:         current.Role,
+		FirstName:    keepExistingString(params.FirstName, current.FirstName),
+		LastName:     keepExistingString(params.LastName, current.LastName),
+		Patronymic:   params.Patronymic,
+		Phone:        keepExistingOptionalString(params.Phone, current.Phone),
+		Gender:       gender,
+		Address:      keepExistingOptionalString(params.Address, current.Address),
+		City:         keepExistingOptionalString(params.City, current.City),
+		AvatarURL:    keepExistingOptionalString(params.AvatarURL, current.AvatarURL),
+		IsActive:     current.IsActive,
+		EmployeeInfo: current.EmployeeInfo,
+		AdminInfo:    current.AdminInfo,
+		StudentInfo:  studentInfo,
+		GuestInfo:    current.GuestInfo,
+	}
+}
+
+func keepExistingString(next, current string) string {
+	if strings.TrimSpace(next) == "" {
+		return current
+	}
+	return next
+}
+
+func keepExistingOptionalString(next, current *string) *string {
+	if next == nil {
+		return current
+	}
+	return next
+}
+
+func fallbackAuthUsername(username string, email *string) string {
+	username = strings.TrimSpace(username)
+	if username != "" {
+		return username
+	}
+	if email == nil {
+		return ""
+	}
+	return strings.TrimSpace(*email)
+}
+
+func stringFromPointer(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func generateSessionToken() (string, error) {
@@ -432,24 +728,33 @@ func generateSessionToken() (string, error) {
 }
 
 func (u *AuthUseCase) ensureLoginAllowed(ctx context.Context, identifier string, ipAddress *string) error {
-	if u.loginAttempts == nil || u.maxLoginAttempts <= 0 || u.loginAttemptWindow <= 0 {
+	if !u.loginLockoutEnabled || u.loginAttempts == nil || u.maxLoginAttempts <= 0 || u.loginAttemptWindow <= 0 {
 		return nil
 	}
 
-	count, err := u.loginAttempts.CountRecentFailed(ctx, identifier, ipAddress, u.now().UTC().Add(-u.loginAttemptWindow))
+	count, err := u.loginAttempts.CountRecentFailed(ctx, identifier, ipAddress, u.loginLockoutScope, u.now().UTC().Add(-u.loginAttemptWindow))
 	if err != nil {
 		return fmt.Errorf("count recent failed attempts: %w", err)
 	}
 
 	if count >= u.maxLoginAttempts {
-		return domain.TooManyRequestsError("too_many_attempts", "too many login attempts, try again later")
+		return domain.TooManyRequestsError("too_many_attempts", "Слишком много попыток входа. Попробуйте позже")
 	}
 
 	return nil
 }
 
+func normalizeLoginLockoutScope(scope string) string {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "identifier", "ip", "identifier_ip":
+		return strings.ToLower(strings.TrimSpace(scope))
+	default:
+		return "identifier_ip"
+	}
+}
+
 func (u *AuthUseCase) recordLoginAttempt(ctx context.Context, identifier string, ipAddress *string, succeeded *bool) {
-	if u.loginAttempts == nil || succeeded == nil {
+	if !u.loginLockoutEnabled || u.loginAttempts == nil || succeeded == nil {
 		return
 	}
 

@@ -13,10 +13,17 @@ var (
 )
 
 type AppError struct {
-	Code    string `json:"error"`
+	Code    string       `json:"error"`
+	Message string       `json:"message"`
+	Fields  []FieldError `json:"fields,omitempty"`
+	Status  int          `json:"-"`
+	Err     error        `json:"-"`
+}
+
+type FieldError struct {
+	Field   string `json:"field"`
+	Code    string `json:"code"`
 	Message string `json:"message"`
-	Status  int    `json:"-"`
-	Err     error  `json:"-"`
 }
 
 func (e *AppError) Error() string {
@@ -47,6 +54,45 @@ func ValidationError(message string) *AppError {
 	return &AppError{
 		Code:    "validation_error",
 		Message: message,
+		Status:  400,
+		Err:     ErrValidation,
+	}
+}
+
+func ValidationField(field, code, message string) FieldError {
+	return FieldError{
+		Field:   field,
+		Code:    code,
+		Message: message,
+	}
+}
+
+func FieldValidationError(message string, fields ...FieldError) *AppError {
+	if message == "" {
+		message = "Проверьте данные запроса"
+	}
+
+	return &AppError{
+		Code:    "validation_error",
+		Message: message,
+		Fields:  fields,
+		Status:  400,
+		Err:     ErrValidation,
+	}
+}
+
+func BadRequestError(code, message string, fields ...FieldError) *AppError {
+	if code == "" {
+		code = "bad_request"
+	}
+	if message == "" {
+		message = "Некорректный запрос"
+	}
+
+	return &AppError{
+		Code:    code,
+		Message: message,
+		Fields:  fields,
 		Status:  400,
 		Err:     ErrValidation,
 	}

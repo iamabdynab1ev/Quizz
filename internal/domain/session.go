@@ -32,6 +32,39 @@ type GoogleLoginParams struct {
 	UserAgent *string
 }
 
+type RegisterParams struct {
+	Username   string  `json:"username,omitempty"`
+	Email      string  `json:"email"`
+	Password   string  `json:"password"`
+	FirstName  string  `json:"first_name"`
+	LastName   string  `json:"last_name"`
+	Patronymic string  `json:"patronymic,omitempty"`
+	Phone      *string `json:"phone,omitempty"`
+	Gender     Gender  `json:"gender"`
+	Address    *string `json:"address,omitempty"`
+	City       *string `json:"city,omitempty"`
+	AvatarURL  *string `json:"avatar_url,omitempty"`
+	BirthDate  *string `json:"birth_date,omitempty"`
+	IPAddress  *string `json:"-"`
+	UserAgent  *string `json:"-"`
+}
+
+type UpdateProfileParams struct {
+	UserID       string  `json:"-"`
+	SessionToken string  `json:"-"`
+	Email        *string `json:"email,omitempty"`
+	Password     *string `json:"password,omitempty"`
+	FirstName    string  `json:"first_name"`
+	LastName     string  `json:"last_name"`
+	Patronymic   string  `json:"patronymic,omitempty"`
+	Phone        *string `json:"phone,omitempty"`
+	Gender       Gender  `json:"gender"`
+	Address      *string `json:"address,omitempty"`
+	City         *string `json:"city,omitempty"`
+	AvatarURL    *string `json:"avatar_url,omitempty"`
+	BirthDate    *string `json:"birth_date,omitempty"`
+}
+
 type LoginResult struct {
 	Token     string     `json:"token"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`

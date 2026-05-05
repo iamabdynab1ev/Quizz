@@ -31,7 +31,7 @@ func NewReviewsHandler(logger *slog.Logger, useCase reviewUseCase) *ReviewsHandl
 func (h *ReviewsHandler) CreateReview(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.CreateReviewParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -90,7 +90,7 @@ func (h *ReviewsHandler) ModerateReview(w nethttp.ResponseWriter, r *nethttp.Req
 		Status domain.ReviewStatus `json:"status"`
 	}
 	if err := decodeJSON(w, r, &request, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 

@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	nethttp "net/http"
+	"strings"
+
+	"lms-arvand-backend/internal/domain"
 )
 
 func decodeJSON(w nethttp.ResponseWriter, r *nethttp.Request, dst any, maxBytes int64) error {
@@ -22,21 +25,57 @@ func decodeJSON(w nethttp.ResponseWriter, r *nethttp.Request, dst any, maxBytes 
 
 		switch {
 		case errors.Is(err, io.EOF):
-			return fmt.Errorf("handler http decode json: empty body")
+			return domain.BadRequestError("invalid_json", "Тело запроса не должно быть пустым",
+				domain.ValidationField("body", "required", "Передайте JSON-объект в теле запроса"))
 		case errors.As(err, &syntaxError):
-			return fmt.Errorf("handler http decode json syntax at offset %d: %w", syntaxError.Offset, err)
+			return domain.BadRequestError("invalid_json", "Некорректный JSON",
+				domain.ValidationField("body", "invalid_json", fmt.Sprintf("Ошибка синтаксиса JSON около позиции %d", syntaxError.Offset)))
 		case errors.As(err, &unmarshalTypeError):
-			return fmt.Errorf("handler http decode json wrong type for field %s: %w", unmarshalTypeError.Field, err)
+			field := unmarshalTypeError.Field
+			if field == "" {
+				field = "body"
+			}
+			return domain.BadRequestError("invalid_json", "Некорректный тип поля",
+				domain.ValidationField(field, "wrong_type", fmt.Sprintf("Поле должно иметь тип %s", unmarshalTypeError.Type.String())))
 		case errors.As(err, &maxBytesError):
-			return fmt.Errorf("handler http decode json max bytes: %w", err)
+			return domain.BadRequestError("invalid_json", "Тело запроса слишком большое",
+				domain.ValidationField("body", "too_large", "Уменьшите размер JSON-запроса"))
 		default:
-			return fmt.Errorf("handler http decode json: %w", err)
+			if field := unknownJSONField(err); field != "" {
+				return domain.BadRequestError("invalid_json", "В запросе есть неизвестное поле",
+					domain.ValidationField(field, "unknown_field", "Это поле не поддерживается API"))
+			}
+			return domain.BadRequestError("invalid_json", "Некорректное тело запроса",
+				domain.ValidationField("body", "invalid_json", err.Error()))
 		}
 	}
 
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("handler http decode json: multiple JSON values are not allowed")
+		return domain.BadRequestError("invalid_json", "Некорректное тело запроса",
+			domain.ValidationField("body", "multiple_json_values", "Передайте только один JSON-объект"))
 	}
 
 	return nil
+}
+
+func writeDecodeError(w nethttp.ResponseWriter, err error) {
+	var appErr *domain.AppError
+	if errors.As(err, &appErr) {
+		writeAppError(w, appErr)
+		return
+	}
+
+	writeError(w, nethttp.StatusBadRequest, "invalid_json", "Некорректное тело запроса")
+}
+
+func unknownJSONField(err error) string {
+	const prefix = `json: unknown field "`
+	message := err.Error()
+	if !strings.HasPrefix(message, prefix) {
+		return ""
+	}
+
+	field := strings.TrimPrefix(message, prefix)
+	field = strings.TrimSuffix(field, `"`)
+	return strings.TrimSpace(field)
 }

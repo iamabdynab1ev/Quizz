@@ -57,8 +57,16 @@ The backend reads these groups of variables from `internal/config/config.go` and
 - `AUTH_SESSION_TTL`
 - `AUTH_SESSION_CACHE_TTL`
 - `AUTH_BCRYPT_COST`
+- `AUTH_LOGIN_LOCKOUT_ENABLED`
 - `AUTH_LOGIN_MAX_ATTEMPTS`
 - `AUTH_LOGIN_ATTEMPT_WINDOW`
+- `AUTH_LOGIN_LOCKOUT_SCOPE`
+
+`AUTH_LOGIN_LOCKOUT_ENABLED=false` disables temporary login blocking. `AUTH_LOGIN_LOCKOUT_SCOPE` controls how failed attempts are counted:
+
+- `identifier` - only by login/email
+- `ip` - only by client IP
+- `identifier_ip` - by login/email or client IP, recommended for production
 
 ### Google login
 
@@ -115,8 +123,10 @@ HTTP_SHUTDOWN_TIMEOUT=15s
 AUTH_SESSION_TTL=24h
 AUTH_SESSION_CACHE_TTL=5m
 AUTH_BCRYPT_COST=12
+AUTH_LOGIN_LOCKOUT_ENABLED=true
 AUTH_LOGIN_MAX_ATTEMPTS=5
 AUTH_LOGIN_ATTEMPT_WINDOW=15m
+AUTH_LOGIN_LOCKOUT_SCOPE=identifier_ip
 GOOGLE_CLIENT_ID=
 UPLOADS_DIR=uploads
 UPLOAD_MAX_SIZE_MB=20

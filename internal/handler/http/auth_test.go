@@ -18,6 +18,10 @@ type authHandlerUseCaseStub struct {
 	loginFn func(ctx context.Context, params domain.LoginParams) (domain.LoginResult, error)
 }
 
+func (s *authHandlerUseCaseStub) Register(context.Context, domain.RegisterParams) (domain.LoginResult, error) {
+	return domain.LoginResult{}, nil
+}
+
 func (s *authHandlerUseCaseStub) Login(ctx context.Context, params domain.LoginParams) (domain.LoginResult, error) {
 	if s.loginFn != nil {
 		return s.loginFn(ctx, params)
@@ -31,6 +35,10 @@ func (s *authHandlerUseCaseStub) LoginWithGoogle(context.Context, domain.GoogleL
 
 func (s *authHandlerUseCaseStub) Authenticate(context.Context, string) (domain.AuthIdentity, error) {
 	return domain.AuthIdentity{}, nil
+}
+
+func (s *authHandlerUseCaseStub) UpdateProfile(context.Context, domain.UpdateProfileParams) (domain.User, error) {
+	return domain.User{}, nil
 }
 
 func (s *authHandlerUseCaseStub) Logout(context.Context, string) error {

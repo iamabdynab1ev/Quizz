@@ -12,9 +12,11 @@ import (
 )
 
 type authUseCase interface {
+	Register(ctx context.Context, params domain.RegisterParams) (domain.LoginResult, error)
 	Login(ctx context.Context, params domain.LoginParams) (domain.LoginResult, error)
 	LoginWithGoogle(ctx context.Context, params domain.GoogleLoginParams) (domain.LoginResult, error)
 	Authenticate(ctx context.Context, token string) (domain.AuthIdentity, error)
+	UpdateProfile(ctx context.Context, params domain.UpdateProfileParams) (domain.User, error)
 	Logout(ctx context.Context, token string) error
 }
 
@@ -37,6 +39,30 @@ func NewAuthHandler(logger *slog.Logger, useCase authUseCase, googleClientID ...
 	}
 }
 
+func (h *AuthHandler) Register(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var request domain.RegisterParams
+	if err := decodeJSON(w, r, &request, 1<<20); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+
+	request.IPAddress = requestIP(r)
+	request.UserAgent = normalizeUserAgent(r.UserAgent())
+
+	result, err := h.useCase.Register(r.Context(), request)
+	if err != nil {
+		status := writeMappedError(w, err)
+		if status >= nethttp.StatusInternalServerError {
+			h.logger.ErrorContext(r.Context(), "регистрация пользователя не выполнена", slog.String("error", err.Error()))
+		}
+		return
+	}
+
+	if err := writeJSON(w, nethttp.StatusCreated, result); err != nil {
+		h.logger.ErrorContext(r.Context(), "ответ регистрации пользователя не отправлен", slog.String("error", err.Error()))
+	}
+}
+
 func (h *AuthHandler) Login(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var request struct {
 		Identifier string `json:"identifier"`
@@ -45,7 +71,7 @@ func (h *AuthHandler) Login(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	if err := decodeJSON(w, r, &request, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -63,13 +89,13 @@ func (h *AuthHandler) Login(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if err != nil {
 		status := writeMappedError(w, err)
 		if status >= nethttp.StatusInternalServerError || status == nethttp.StatusUnauthorized {
-			h.logger.ErrorContext(r.Context(), "login failed", slog.String("error", err.Error()))
+			h.logger.ErrorContext(r.Context(), "вход пользователя не выполнен", slog.String("error", err.Error()))
 		}
 		return
 	}
 
 	if err := writeJSON(w, nethttp.StatusOK, result); err != nil {
-		h.logger.ErrorContext(r.Context(), "login response failed", slog.String("error", err.Error()))
+		h.logger.ErrorContext(r.Context(), "ответ входа пользователя не отправлен", slog.String("error", err.Error()))
 	}
 }
 
@@ -79,7 +105,7 @@ func (h *AuthHandler) LoginWithGoogle(w nethttp.ResponseWriter, r *nethttp.Reque
 	}
 
 	if err := decodeJSON(w, r, &request, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -91,13 +117,13 @@ func (h *AuthHandler) LoginWithGoogle(w nethttp.ResponseWriter, r *nethttp.Reque
 	if err != nil {
 		status := writeMappedError(w, err)
 		if status >= nethttp.StatusInternalServerError || status == nethttp.StatusUnauthorized || status == nethttp.StatusServiceUnavailable {
-			h.logger.ErrorContext(r.Context(), "google login failed", slog.String("error", err.Error()))
+			h.logger.ErrorContext(r.Context(), "вход через Google не выполнен", slog.String("error", err.Error()))
 		}
 		return
 	}
 
 	if err := writeJSON(w, nethttp.StatusOK, result); err != nil {
-		h.logger.ErrorContext(r.Context(), "google login response failed", slog.String("error", err.Error()))
+		h.logger.ErrorContext(r.Context(), "ответ входа через Google не отправлен", slog.String("error", err.Error()))
 	}
 }
 
@@ -111,21 +137,21 @@ func (h *AuthHandler) GoogleConfig(w nethttp.ResponseWriter, r *nethttp.Request)
 	}
 
 	if err := writeJSON(w, nethttp.StatusOK, response); err != nil {
-		h.logger.ErrorContext(r.Context(), "google config response failed", slog.String("error", err.Error()))
+		h.logger.ErrorContext(r.Context(), "ответ настроек Google не отправлен", slog.String("error", err.Error()))
 	}
 }
 
 func (h *AuthHandler) Logout(w nethttp.ResponseWriter, r *nethttp.Request) {
 	token, ok := middleware.CurrentSessionToken(r.Context())
 	if !ok {
-		writeError(w, nethttp.StatusUnauthorized, "unauthorized", "authentication required")
+		writeError(w, nethttp.StatusUnauthorized, "unauthorized", "Требуется авторизация")
 		return
 	}
 
 	if err := h.useCase.Logout(r.Context(), token); err != nil {
 		status := writeMappedError(w, err)
 		if status >= nethttp.StatusInternalServerError || status == nethttp.StatusUnauthorized {
-			h.logger.ErrorContext(r.Context(), "logout failed", slog.String("error", err.Error()))
+			h.logger.ErrorContext(r.Context(), "выход пользователя не выполнен", slog.String("error", err.Error()))
 		}
 		return
 	}
@@ -133,10 +159,42 @@ func (h *AuthHandler) Logout(w nethttp.ResponseWriter, r *nethttp.Request) {
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
+func (h *AuthHandler) UpdateMe(w nethttp.ResponseWriter, r *nethttp.Request) {
+	identity, ok := middleware.CurrentAuthIdentity(r.Context())
+	if !ok {
+		writeError(w, nethttp.StatusUnauthorized, "unauthorized", "Требуется авторизация")
+		return
+	}
+
+	sessionToken, _ := middleware.CurrentSessionToken(r.Context())
+
+	var request domain.UpdateProfileParams
+	if err := decodeJSON(w, r, &request, 1<<20); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+
+	request.UserID = identity.User.ID
+	request.SessionToken = sessionToken
+
+	user, err := h.useCase.UpdateProfile(r.Context(), request)
+	if err != nil {
+		status := writeMappedError(w, err)
+		if status >= nethttp.StatusInternalServerError {
+			h.logger.ErrorContext(r.Context(), "профиль пользователя не обновлён", slog.String("error", err.Error()))
+		}
+		return
+	}
+
+	if err := writeJSON(w, nethttp.StatusOK, user); err != nil {
+		h.logger.ErrorContext(r.Context(), "ответ профиля пользователя не отправлен", slog.String("error", err.Error()))
+	}
+}
+
 func (h *AuthHandler) Me(w nethttp.ResponseWriter, r *nethttp.Request) {
 	identity, ok := middleware.CurrentAuthIdentity(r.Context())
 	if !ok {
-		writeError(w, nethttp.StatusUnauthorized, "unauthorized", "authentication required")
+		writeError(w, nethttp.StatusUnauthorized, "unauthorized", "Требуется авторизация")
 		return
 	}
 
@@ -149,7 +207,7 @@ func (h *AuthHandler) Me(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	if err := writeJSON(w, nethttp.StatusOK, response); err != nil {
-		h.logger.ErrorContext(r.Context(), "me response failed", slog.String("error", err.Error()))
+		h.logger.ErrorContext(r.Context(), "ответ текущего пользователя не отправлен", slog.String("error", err.Error()))
 	}
 }
 

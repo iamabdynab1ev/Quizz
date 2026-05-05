@@ -31,7 +31,7 @@ func NewContentBlocksHandler(logger *slog.Logger, useCase contentBlockUseCase) *
 func (h *ContentBlocksHandler) CreateContentBlock(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.CreateContentBlockParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -88,7 +88,7 @@ func (h *ContentBlocksHandler) ListContentBlocks(w nethttp.ResponseWriter, r *ne
 func (h *ContentBlocksHandler) UpdateContentBlock(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var params domain.UpdateContentBlockParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
-		writeError(w, nethttp.StatusBadRequest, "invalid_json", "invalid request body")
+		writeDecodeError(w, err)
 		return
 	}
 

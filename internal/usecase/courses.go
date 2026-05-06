@@ -62,6 +62,9 @@ func (u *CourseUseCase) GetByID(ctx context.Context, courseID string) (domain.Co
 	if err != nil {
 		return domain.Course{}, fmt.Errorf("usecase courses get by id: %w", err)
 	}
+	if course.Status == domain.CourseStatusArchived {
+		return domain.Course{}, fmt.Errorf("usecase courses get by id archived: %w", domain.ErrNotFound)
+	}
 
 	return course, nil
 }
@@ -200,8 +203,12 @@ func normalizeCourseListFilter(filter domain.CourseListFilter) (domain.CourseLis
 		if !status.IsValid() {
 			return domain.CourseListFilter{}, fmt.Errorf("status filter is invalid: %w", domain.ErrValidation)
 		}
+		if status == domain.CourseStatusArchived {
+			return domain.CourseListFilter{}, fmt.Errorf("archived courses are not available: %w", domain.ErrValidation)
+		}
 		filter.Status = &status
 	}
+	filter.IncludeArchived = false
 
 	if filter.Category != nil {
 		filter.Category = normalizeOptionalString(filter.Category)

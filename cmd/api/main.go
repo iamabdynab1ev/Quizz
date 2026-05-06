@@ -100,7 +100,7 @@ func run() error {
 
 		logger.Info("стартовый администратор подготовлен",
 			slog.String("user_id", adminUser.ID),
-			slog.String("username", adminUser.Username),
+			slog.Any("email", adminUser.Email),
 		)
 	}
 

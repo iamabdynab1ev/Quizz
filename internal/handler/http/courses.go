@@ -48,7 +48,7 @@ func (h *CoursesHandler) CreateCourse(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusCreated, course); err != nil {
+	if err := writeJSON(w, nethttp.StatusCreated, toCourseResponse(course)); err != nil {
 		h.logger.ErrorContext(r.Context(), "create course response failed", slog.String("error", err.Error()))
 	}
 }
@@ -63,7 +63,7 @@ func (h *CoursesHandler) GetCourseByID(w nethttp.ResponseWriter, r *nethttp.Requ
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusOK, course); err != nil {
+	if err := writeJSON(w, nethttp.StatusOK, toCourseResponse(course)); err != nil {
 		h.logger.ErrorContext(r.Context(), "get course response failed", slog.String("error", err.Error()))
 	}
 }
@@ -84,7 +84,7 @@ func (h *CoursesHandler) ListCourses(w nethttp.ResponseWriter, r *nethttp.Reques
 		return
 	}
 
-	if err := writePagedJSON(w, nethttp.StatusOK, courses, total, filter.Limit, filter.Offset); err != nil {
+	if err := writePagedJSON(w, nethttp.StatusOK, toCourseResponses(courses), total, filter.Limit, filter.Offset); err != nil {
 		h.logger.ErrorContext(r.Context(), "list courses response failed", slog.String("error", err.Error()))
 	}
 }
@@ -107,7 +107,7 @@ func (h *CoursesHandler) UpdateCourse(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusOK, course); err != nil {
+	if err := writeJSON(w, nethttp.StatusOK, toCourseResponse(course)); err != nil {
 		h.logger.ErrorContext(r.Context(), "update course response failed", slog.String("error", err.Error()))
 	}
 }

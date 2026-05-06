@@ -13,7 +13,6 @@ import (
 )
 
 type authUserRepository interface {
-	GetByLogin(ctx context.Context, identifier string) (domain.User, error)
 	GetByID(ctx context.Context, userID string) (domain.User, error)
 	GetByEmail(ctx context.Context, email string) (domain.User, error)
 	GetByGoogleID(ctx context.Context, googleID string) (domain.User, error)
@@ -107,7 +106,6 @@ func (u *AuthUseCase) Register(ctx context.Context, params domain.RegisterParams
 	email := normalized.Email
 	passwordHashPtr := passwordHash
 	user, err := u.users.Create(ctx, domain.CreateUserParams{
-		Username:     fallbackAuthUsername(normalized.Username, &email),
 		Email:        &email,
 		PasswordHash: &passwordHashPtr,
 		Role:         domain.UserRoleStudent,
@@ -116,6 +114,7 @@ func (u *AuthUseCase) Register(ctx context.Context, params domain.RegisterParams
 		Patronymic:   normalized.Patronymic,
 		Phone:        normalized.Phone,
 		Gender:       normalized.Gender,
+		BirthDate:    normalized.BirthDate,
 		Address:      normalized.Address,
 		City:         normalized.City,
 		AvatarURL:    normalized.AvatarURL,
@@ -133,8 +132,8 @@ func (u *AuthUseCase) Register(ctx context.Context, params domain.RegisterParams
 	if u.audit != nil {
 		u.audit.Log(ctx, domain.AppEventUserCreated, map[string]any{
 			"user_id":  user.ID,
-			"username": user.Username,
-			"role":     user.Role,
+			"email":    user.Email,
+			"is_admin": user.Role == domain.UserRoleAdmin,
 			"source":   "register",
 		})
 	}
@@ -161,7 +160,7 @@ func (u *AuthUseCase) Login(ctx context.Context, params domain.LoginParams) (dom
 		return domain.LoginResult{}, fmt.Errorf("usecase auth login rate limit: %w", err)
 	}
 
-	user, err := u.users.GetByLogin(ctx, normalized.Identifier)
+	user, err := u.users.GetByEmail(ctx, normalized.Identifier)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return domain.LoginResult{}, domain.UnauthorizedError("Неверный логин или пароль")
@@ -328,9 +327,9 @@ func (u *AuthUseCase) UpdateProfile(ctx context.Context, params domain.UpdatePro
 
 	if u.audit != nil {
 		u.audit.Log(ctx, domain.AppEventUserUpdated, map[string]any{
-			"user_id":  user.ID,
-			"username": user.Username,
-			"source":   "profile",
+			"user_id": user.ID,
+			"email":   user.Email,
+			"source":  "profile",
 		})
 	}
 
@@ -372,13 +371,11 @@ func (u *AuthUseCase) resolveGoogleUser(ctx context.Context, identity GoogleIden
 		return domain.User{}, fmt.Errorf("get by email: %w", err)
 	}
 
-	username := generateGoogleUsername(identity.Email, identity.Subject)
 	googleID := identity.Subject
 	email := identity.Email
 	avatarURL := normalizeOptionalString(&identity.Picture)
 
 	createdUser, err := u.users.Create(ctx, domain.CreateUserParams{
-		Username:  username,
 		Email:     &email,
 		GoogleID:  &googleID,
 		Role:      u.googleDefaultRole,
@@ -478,7 +475,6 @@ func normalizeGoogleLoginParams(params domain.GoogleLoginParams) (domain.GoogleL
 }
 
 func normalizeRegisterParams(params domain.RegisterParams) (domain.RegisterParams, error) {
-	params.Username = strings.TrimSpace(params.Username)
 	params.Email = strings.TrimSpace(strings.ToLower(params.Email))
 	params.Password = strings.TrimSpace(params.Password)
 	params.FirstName = strings.TrimSpace(params.FirstName)
@@ -491,6 +487,7 @@ func normalizeRegisterParams(params domain.RegisterParams) (domain.RegisterParam
 	params.BirthDate = normalizeOptionalString(params.BirthDate)
 	params.IPAddress = normalizeOptionalString(params.IPAddress)
 	params.UserAgent = normalizeOptionalString(params.UserAgent)
+	params.Gender = genderFromBoolean(params.Gender, params.IsMale)
 
 	var validation fieldValidationBuilder
 	validation.addRequired("email", params.Email, "Email")
@@ -538,6 +535,7 @@ func normalizeUpdateProfileParams(params domain.UpdateProfileParams) (domain.Upd
 	params.City = normalizeOptionalString(params.City)
 	params.AvatarURL = normalizeOptionalString(params.AvatarURL)
 	params.BirthDate = normalizeOptionalString(params.BirthDate)
+	params.Gender = genderFromBoolean(params.Gender, params.IsMale)
 
 	var validation fieldValidationBuilder
 	validation.addRequired("user_id", params.UserID, "ID пользователя")
@@ -569,53 +567,6 @@ func loginResultFromSession(user domain.User, session domain.Session) domain.Log
 		ExpiresAt: session.ExpiresAt,
 		User:      user,
 	}
-}
-
-func generateGoogleUsername(email, subject string) string {
-	base := email
-	if localPart, _, found := strings.Cut(email, "@"); found {
-		base = localPart
-	}
-
-	base = strings.ToLower(strings.TrimSpace(base))
-	if base == "" {
-		base = "google_user"
-	}
-
-	var builder strings.Builder
-	for _, symbol := range base {
-		switch {
-		case symbol >= 'a' && symbol <= 'z':
-			builder.WriteRune(symbol)
-		case symbol >= '0' && symbol <= '9':
-			builder.WriteRune(symbol)
-		case symbol == '_' || symbol == '-' || symbol == '.':
-			builder.WriteRune(symbol)
-		default:
-			builder.WriteByte('_')
-		}
-	}
-
-	sanitized := strings.Trim(builder.String(), "_.-")
-	if sanitized == "" {
-		sanitized = "google_user"
-	}
-
-	suffix := strings.TrimSpace(subject)
-	if len(suffix) > 8 {
-		suffix = suffix[len(suffix)-8:]
-	}
-
-	if suffix == "" {
-		return sanitized
-	}
-
-	username := sanitized + "_" + strings.ToLower(suffix)
-	if len(username) > 64 {
-		username = username[:64]
-	}
-
-	return username
 }
 
 func normalizeLoginParams(params domain.LoginParams) (domain.LoginParams, error) {
@@ -665,7 +616,6 @@ func profileUpdateToUserParams(current domain.User, params domain.UpdateProfileP
 
 	return domain.UpdateUserParams{
 		ID:           current.ID,
-		Username:     current.Username,
 		Email:        email,
 		GoogleID:     current.GoogleID,
 		Password:     params.Password,
@@ -675,12 +625,12 @@ func profileUpdateToUserParams(current domain.User, params domain.UpdateProfileP
 		Patronymic:   params.Patronymic,
 		Phone:        keepExistingOptionalString(params.Phone, current.Phone),
 		Gender:       gender,
+		BirthDate:    keepExistingOptionalString(params.BirthDate, current.BirthDate),
 		Address:      keepExistingOptionalString(params.Address, current.Address),
 		City:         keepExistingOptionalString(params.City, current.City),
 		AvatarURL:    keepExistingOptionalString(params.AvatarURL, current.AvatarURL),
 		IsActive:     current.IsActive,
 		EmployeeInfo: current.EmployeeInfo,
-		AdminInfo:    current.AdminInfo,
 		StudentInfo:  studentInfo,
 		GuestInfo:    current.GuestInfo,
 	}
@@ -700,15 +650,16 @@ func keepExistingOptionalString(next, current *string) *string {
 	return next
 }
 
-func fallbackAuthUsername(username string, email *string) string {
-	username = strings.TrimSpace(username)
-	if username != "" {
-		return username
+func genderFromBoolean(current domain.Gender, isMale *bool) domain.Gender {
+	if isMale == nil {
+		return current
 	}
-	if email == nil {
-		return ""
+
+	if *isMale {
+		return domain.GenderMale
 	}
-	return strings.TrimSpace(*email)
+
+	return domain.GenderFemale
 }
 
 func stringFromPointer(value *string) string {

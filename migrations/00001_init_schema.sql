@@ -38,8 +38,7 @@ CREATE TYPE app_event_type     AS ENUM (
 -- =======================================================
 CREATE TABLE users (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    username      TEXT UNIQUE NOT NULL,
-    email         TEXT UNIQUE,
+    email         TEXT UNIQUE NOT NULL,
     google_id     TEXT UNIQUE,          -- Интеграция с OAuth
     password_hash TEXT,                 -- Может быть NULL если зашел через Google
     role          user_role NOT NULL DEFAULT 'student',
@@ -48,6 +47,7 @@ CREATE TABLE users (
     patronymic    TEXT,
     phone         TEXT,
     gender        gender DEFAULT 'unspecified',
+    birth_date    DATE,
     address       TEXT,
     city          TEXT,                 -- Выбор города/района из макета
     avatar_url    TEXT,
@@ -61,13 +61,6 @@ CREATE TABLE user_employee_info (
     user_id     UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     branch      TEXT, office TEXT, position TEXT, department TEXT,
     employee_id TEXT, hire_date DATE, notes TEXT
-);
-
-CREATE TABLE user_admin_info (
-    user_id        UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    is_super_admin BOOLEAN NOT NULL DEFAULT false,
-    permissions    JSONB NOT NULL DEFAULT '[]'::jsonb,
-    last_login_at  TIMESTAMPTZ
 );
 
 CREATE TABLE user_student_info (
@@ -300,7 +293,6 @@ DROP TABLE IF EXISTS courses CASCADE;
 DROP TABLE IF EXISTS sessions CASCADE;
 DROP TABLE IF EXISTS user_guest_info CASCADE;
 DROP TABLE IF EXISTS user_student_info CASCADE;
-DROP TABLE IF EXISTS user_admin_info CASCADE;
 DROP TABLE IF EXISTS user_employee_info CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 

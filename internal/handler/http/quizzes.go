@@ -48,7 +48,7 @@ func (h *QuizzesHandler) CreateQuiz(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusCreated, quiz); err != nil {
+	if err := writeJSON(w, nethttp.StatusCreated, toQuizResponse(quiz)); err != nil {
 		h.logger.ErrorContext(r.Context(), "create quiz response failed", slog.String("error", err.Error()))
 	}
 }
@@ -63,7 +63,7 @@ func (h *QuizzesHandler) GetQuizByID(w nethttp.ResponseWriter, r *nethttp.Reques
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusOK, quiz); err != nil {
+	if err := writeJSON(w, nethttp.StatusOK, toQuizResponse(quiz)); err != nil {
 		h.logger.ErrorContext(r.Context(), "get quiz response failed", slog.String("error", err.Error()))
 	}
 }
@@ -84,7 +84,7 @@ func (h *QuizzesHandler) ListQuizzes(w nethttp.ResponseWriter, r *nethttp.Reques
 		return
 	}
 
-	if err := writePagedJSON(w, nethttp.StatusOK, quizzes, total, filter.Limit, filter.Offset); err != nil {
+	if err := writePagedJSON(w, nethttp.StatusOK, toQuizResponses(quizzes), total, filter.Limit, filter.Offset); err != nil {
 		h.logger.ErrorContext(r.Context(), "list quizzes response failed", slog.String("error", err.Error()))
 	}
 }
@@ -107,7 +107,7 @@ func (h *QuizzesHandler) UpdateQuiz(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusOK, quiz); err != nil {
+	if err := writeJSON(w, nethttp.StatusOK, toQuizResponse(quiz)); err != nil {
 		h.logger.ErrorContext(r.Context(), "update quiz response failed", slog.String("error", err.Error()))
 	}
 }

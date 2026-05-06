@@ -58,7 +58,7 @@ func (h *AuthHandler) Register(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusCreated, result); err != nil {
+	if err := writeJSON(w, nethttp.StatusCreated, toLoginResponse(result)); err != nil {
 		h.logger.ErrorContext(r.Context(), "ответ регистрации пользователя не отправлен", slog.String("error", err.Error()))
 	}
 }
@@ -94,7 +94,7 @@ func (h *AuthHandler) Login(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusOK, result); err != nil {
+	if err := writeJSON(w, nethttp.StatusOK, toLoginResponse(result)); err != nil {
 		h.logger.ErrorContext(r.Context(), "ответ входа пользователя не отправлен", slog.String("error", err.Error()))
 	}
 }
@@ -122,7 +122,7 @@ func (h *AuthHandler) LoginWithGoogle(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusOK, result); err != nil {
+	if err := writeJSON(w, nethttp.StatusOK, toLoginResponse(result)); err != nil {
 		h.logger.ErrorContext(r.Context(), "ответ входа через Google не отправлен", slog.String("error", err.Error()))
 	}
 }
@@ -186,7 +186,7 @@ func (h *AuthHandler) UpdateMe(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusOK, user); err != nil {
+	if err := writeJSON(w, nethttp.StatusOK, toUserResponse(user)); err != nil {
 		h.logger.ErrorContext(r.Context(), "ответ профиля пользователя не отправлен", slog.String("error", err.Error()))
 	}
 }
@@ -199,10 +199,10 @@ func (h *AuthHandler) Me(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	response := struct {
-		User    domain.User    `json:"user"`
+		User    userResponse   `json:"user"`
 		Session domain.Session `json:"session"`
 	}{
-		User:    identity.User,
+		User:    toUserResponse(identity.User),
 		Session: identity.Session,
 	}
 

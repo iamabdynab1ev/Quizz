@@ -80,7 +80,6 @@ func (r *SessionRepository) GetByTokenWithUser(ctx context.Context, token string
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		LEFT JOIN user_employee_info emp ON emp.user_id = u.id
-		LEFT JOIN user_admin_info adm ON adm.user_id = u.id
 		LEFT JOIN user_student_info stu ON stu.user_id = u.id
 		LEFT JOIN user_guest_info gst ON gst.user_id = u.id
 		WHERE s.token = $1
@@ -148,6 +147,7 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 	var lastName sql.NullString
 	var patronymic sql.NullString
 	var phone sql.NullString
+	var birthDate sql.NullTime
 	var address sql.NullString
 	var city sql.NullString
 	var avatarURL sql.NullString
@@ -161,10 +161,6 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 	var employeeID sql.NullString
 	var employeeHireDate sql.NullTime
 	var employeeNotes sql.NullString
-	var hasAdminInfo bool
-	var adminIsSuperAdmin sql.NullBool
-	var adminPermissions []byte
-	var adminLastLogin sql.NullTime
 	var hasStudentInfo bool
 	var studentID sql.NullString
 	var studentGroupName sql.NullString
@@ -183,7 +179,6 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 		&session.CreatedAt,
 		&expiresAt,
 		&user.ID,
-		&user.Username,
 		&email,
 		&googleID,
 		&passwordHash,
@@ -193,6 +188,7 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 		&patronymic,
 		&phone,
 		&gender,
+		&birthDate,
 		&address,
 		&city,
 		&avatarURL,
@@ -207,10 +203,6 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 		&employeeID,
 		&employeeHireDate,
 		&employeeNotes,
-		&hasAdminInfo,
-		&adminIsSuperAdmin,
-		&adminPermissions,
-		&adminLastLogin,
 		&hasStudentInfo,
 		&studentID,
 		&studentGroupName,
@@ -224,11 +216,6 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 		return domain.AuthIdentity{}, err
 	}
 
-	permissions, err := parsePermissions(adminPermissions)
-	if err != nil {
-		return domain.AuthIdentity{}, fmt.Errorf("repository postgres scan auth identity permissions: %w", err)
-	}
-
 	user.Email = optionalString(email)
 	user.GoogleID = optionalString(googleID)
 	user.PasswordHash = optionalString(passwordHash)
@@ -238,6 +225,7 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 	user.Patronymic = patronymic.String
 	user.Phone = optionalString(phone)
 	user.Gender = domain.Gender(gender)
+	user.BirthDate = optionalDateString(birthDate)
 	user.Address = optionalString(address)
 	user.City = optionalString(city)
 	user.AvatarURL = optionalString(avatarURL)
@@ -251,14 +239,6 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 			EmployeeID: employeeID.String,
 			HireDate:   dateString(employeeHireDate),
 			Notes:      employeeNotes.String,
-		}
-	}
-
-	if hasAdminInfo {
-		user.AdminInfo = &domain.AdminInfo{
-			IsSuperAdmin: adminIsSuperAdmin.Bool,
-			Permissions:  permissions,
-			LastLoginAt:  optionalTime(adminLastLogin),
 		}
 	}
 

@@ -54,15 +54,23 @@ func (r *CourseTestRepository) List(ctx context.Context, filter domain.CourseTes
 		query := strings.Builder{}
 		if includePagination {
 			query.WriteString(`
-			SELECT id, course_id::text, module_id::text, quiz_id::text, position
-				FROM course_tests
-				WHERE 1 = 1
+				SELECT ct.id, ct.course_id::text, ct.module_id::text, ct.quiz_id::text, ct.position
+				FROM course_tests ct
+				LEFT JOIN course_modules cm ON cm.id = ct.module_id
+				LEFT JOIN courses c ON c.id = COALESCE(ct.course_id, cm.course_id)
+				INNER JOIN quizzes q ON q.id = ct.quiz_id
+				WHERE c.status <> 'archived'
+					AND q.status <> 'archived'
 			`)
 		} else {
 			query.WriteString(`
 				SELECT COUNT(*)
-				FROM course_tests
-				WHERE 1 = 1
+				FROM course_tests ct
+				LEFT JOIN course_modules cm ON cm.id = ct.module_id
+				LEFT JOIN courses c ON c.id = COALESCE(ct.course_id, cm.course_id)
+				INNER JOIN quizzes q ON q.id = ct.quiz_id
+				WHERE c.status <> 'archived'
+					AND q.status <> 'archived'
 			`)
 		}
 
@@ -70,19 +78,19 @@ func (r *CourseTestRepository) List(ctx context.Context, filter domain.CourseTes
 		position := 1
 
 		if filter.CourseID != nil {
-			query.WriteString(fmt.Sprintf(" AND course_id = $%d::uuid", position))
+			query.WriteString(fmt.Sprintf(" AND ct.course_id = $%d::uuid", position))
 			args = append(args, *filter.CourseID)
 			position++
 		}
 
 		if filter.ModuleID != nil {
-			query.WriteString(fmt.Sprintf(" AND module_id = $%d::uuid", position))
+			query.WriteString(fmt.Sprintf(" AND ct.module_id = $%d::uuid", position))
 			args = append(args, *filter.ModuleID)
 			position++
 		}
 
 		if includePagination {
-			query.WriteString(" ORDER BY position ASC")
+			query.WriteString(" ORDER BY ct.position ASC")
 		}
 
 		return query.String(), args

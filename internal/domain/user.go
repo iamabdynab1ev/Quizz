@@ -40,7 +40,6 @@ func (g Gender) IsValid() bool {
 
 type User struct {
 	ID           string        `json:"id"`
-	Username     string        `json:"username"`
 	Email        *string       `json:"email,omitempty"`
 	GoogleID     *string       `json:"google_id,omitempty"`
 	Role         UserRole      `json:"role"`
@@ -49,6 +48,7 @@ type User struct {
 	Patronymic   string        `json:"patronymic,omitempty"`
 	Phone        *string       `json:"phone,omitempty"`
 	Gender       Gender        `json:"gender"`
+	BirthDate    *string       `json:"birth_date,omitempty"`
 	Address      *string       `json:"address,omitempty"`
 	City         *string       `json:"city,omitempty"`
 	AvatarURL    *string       `json:"avatar_url,omitempty"`
@@ -56,7 +56,6 @@ type User struct {
 	CreatedAt    time.Time     `json:"created_at"`
 	UpdatedAt    time.Time     `json:"updated_at"`
 	EmployeeInfo *EmployeeInfo `json:"employee_info,omitempty"`
-	AdminInfo    *AdminInfo    `json:"admin_info,omitempty"`
 	StudentInfo  *StudentInfo  `json:"student_info,omitempty"`
 	GuestInfo    *GuestInfo    `json:"guest_info,omitempty"`
 	PasswordHash *string       `json:"-"`
@@ -70,12 +69,6 @@ type EmployeeInfo struct {
 	EmployeeID string `json:"employee_id,omitempty"`
 	HireDate   string `json:"hire_date,omitempty"`
 	Notes      string `json:"notes,omitempty"`
-}
-
-type AdminInfo struct {
-	IsSuperAdmin bool       `json:"is_super_admin"`
-	Permissions  []string   `json:"permissions,omitempty"`
-	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
 }
 
 type StudentInfo struct {
@@ -92,7 +85,6 @@ type GuestInfo struct {
 }
 
 type CreateUserParams struct {
-	Username     string        `json:"username"`
 	Email        *string       `json:"email,omitempty"`
 	GoogleID     *string       `json:"google_id,omitempty"`
 	Password     *string       `json:"password,omitempty"`
@@ -103,18 +95,17 @@ type CreateUserParams struct {
 	Patronymic   string        `json:"patronymic,omitempty"`
 	Phone        *string       `json:"phone,omitempty"`
 	Gender       Gender        `json:"gender"`
+	BirthDate    *string       `json:"birth_date,omitempty"`
 	Address      *string       `json:"address,omitempty"`
 	City         *string       `json:"city,omitempty"`
 	AvatarURL    *string       `json:"avatar_url,omitempty"`
 	EmployeeInfo *EmployeeInfo `json:"employee_info,omitempty"`
-	AdminInfo    *AdminInfo    `json:"admin_info,omitempty"`
 	StudentInfo  *StudentInfo  `json:"student_info,omitempty"`
 	GuestInfo    *GuestInfo    `json:"guest_info,omitempty"`
 }
 
 type UpdateUserParams struct {
 	ID           string        `json:"id"`
-	Username     string        `json:"username"`
 	Email        *string       `json:"email,omitempty"`
 	GoogleID     *string       `json:"google_id,omitempty"`
 	Password     *string       `json:"password,omitempty"`
@@ -125,12 +116,12 @@ type UpdateUserParams struct {
 	Patronymic   string        `json:"patronymic,omitempty"`
 	Phone        *string       `json:"phone,omitempty"`
 	Gender       Gender        `json:"gender"`
+	BirthDate    *string       `json:"birth_date,omitempty"`
 	Address      *string       `json:"address,omitempty"`
 	City         *string       `json:"city,omitempty"`
 	AvatarURL    *string       `json:"avatar_url,omitempty"`
 	IsActive     bool          `json:"is_active"`
 	EmployeeInfo *EmployeeInfo `json:"employee_info,omitempty"`
-	AdminInfo    *AdminInfo    `json:"admin_info,omitempty"`
 	StudentInfo  *StudentInfo  `json:"student_info,omitempty"`
 	GuestInfo    *GuestInfo    `json:"guest_info,omitempty"`
 }

@@ -3,7 +3,6 @@ package postgres
 import (
 	"database/sql"
 	"database/sql/driver"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -29,6 +28,14 @@ func nullableStringPointerForWrite(value *string) any {
 
 	if *value == "" {
 		return nil
+	}
+
+	return *value
+}
+
+func stringPointerForWrite(value *string) string {
+	if value == nil {
+		return ""
 	}
 
 	return *value
@@ -100,6 +107,15 @@ func dateString(value sql.NullTime) string {
 	return value.Time.Format("2006-01-02")
 }
 
+func optionalDateString(value sql.NullTime) *string {
+	if !value.Valid {
+		return nil
+	}
+
+	date := value.Time.Format("2006-01-02")
+	return &date
+}
+
 func toJSONValue(value driver.Valuer) (any, error) {
 	rawValue, err := value.Value()
 	if err != nil {
@@ -120,32 +136,6 @@ func multiLangValueOrNil(value domain.MultiLangText) (any, error) {
 	}
 
 	return rawValue, nil
-}
-
-func permissionsValue(permissions []string) (any, error) {
-	if len(permissions) == 0 {
-		return []byte("[]"), nil
-	}
-
-	payload, err := json.Marshal(permissions)
-	if err != nil {
-		return nil, fmt.Errorf("repository postgres permissions value marshal: %w", err)
-	}
-
-	return payload, nil
-}
-
-func parsePermissions(data []byte) ([]string, error) {
-	if len(data) == 0 {
-		return nil, nil
-	}
-
-	var permissions []string
-	if err := json.Unmarshal(data, &permissions); err != nil {
-		return nil, fmt.Errorf("repository postgres parse permissions: %w", err)
-	}
-
-	return permissions, nil
 }
 
 func platformsToStrings(platforms []domain.Platform) []string {

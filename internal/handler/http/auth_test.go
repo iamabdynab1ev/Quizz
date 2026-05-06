@@ -61,7 +61,7 @@ func TestAuthHandlerLoginUsesEmailFallback(t *testing.T) {
 			return domain.LoginResult{
 				Token:     "session-token",
 				ExpiresAt: func() *time.Time { ts := time.Now().Add(time.Hour); return &ts }(),
-				User:      domain.User{ID: "user-id", Username: "admin", Role: domain.UserRoleAdmin},
+				User:      domain.User{ID: "user-id", Role: domain.UserRoleAdmin},
 			}, nil
 		},
 	}
@@ -82,6 +82,14 @@ func TestAuthHandlerLoginUsesEmailFallback(t *testing.T) {
 
 	if !bytes.Contains(rr.Body.Bytes(), []byte(`"token":"session-token"`)) {
 		t.Fatalf("expected response to contain token, got %s", rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`"is_admin":true`)) {
+		t.Fatalf("expected response to expose is_admin, got %s", rr.Body.String())
+	}
+	for _, forbidden := range []string{`"username"`, `"role"`, `"gender"`} {
+		if bytes.Contains(rr.Body.Bytes(), []byte(forbidden)) {
+			t.Fatalf("expected response not to expose %s, got %s", forbidden, rr.Body.String())
+		}
 	}
 }
 

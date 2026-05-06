@@ -52,7 +52,6 @@ func run() error {
 
 	logger.Info("admin seed completed",
 		slog.String("user_id", adminUser.ID),
-		slog.String("username", adminUser.Username),
 		slog.String("email", cfg.Seed.Admin.Email),
 	)
 

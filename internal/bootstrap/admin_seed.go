@@ -11,7 +11,7 @@ import (
 )
 
 type adminUserLookup interface {
-	GetByLogin(ctx context.Context, identifier string) (domain.User, error)
+	GetByEmail(ctx context.Context, email string) (domain.User, error)
 }
 
 type adminUserWriter interface {
@@ -37,9 +37,9 @@ func (s *AdminSeeder) Seed(ctx context.Context, cfg config.SeedAdminConfig) (dom
 		return domain.User{}, fmt.Errorf("bootstrap admin seed normalize config: %w", err)
 	}
 
-	existingUser, err := s.lookup.GetByLogin(ctx, normalized.Username)
+	existingUser, err := s.lookup.GetByEmail(ctx, normalized.Email)
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
-		return domain.User{}, fmt.Errorf("bootstrap admin seed get by login: %w", err)
+		return domain.User{}, fmt.Errorf("bootstrap admin seed get by email: %w", err)
 	}
 
 	if errors.Is(err, domain.ErrNotFound) {
@@ -60,17 +60,11 @@ func (s *AdminSeeder) Seed(ctx context.Context, cfg config.SeedAdminConfig) (dom
 }
 
 func normalizeAdminSeedConfig(cfg config.SeedAdminConfig) (config.SeedAdminConfig, error) {
-	cfg.Username = strings.TrimSpace(cfg.Username)
-	cfg.Email = strings.TrimSpace(cfg.Email)
+	cfg.Email = strings.TrimSpace(strings.ToLower(cfg.Email))
 	cfg.Password = strings.TrimSpace(cfg.Password)
 	cfg.FirstName = strings.TrimSpace(cfg.FirstName)
 	cfg.LastName = strings.TrimSpace(cfg.LastName)
 	cfg.Patronymic = strings.TrimSpace(cfg.Patronymic)
-	cfg.Permissions = normalizePermissions(cfg.Permissions)
-
-	if cfg.Username == "" {
-		return config.SeedAdminConfig{}, fmt.Errorf("username is required: %w", domain.ErrValidation)
-	}
 
 	if cfg.Password == "" {
 		return config.SeedAdminConfig{}, fmt.Errorf("password is required: %w", domain.ErrValidation)
@@ -88,10 +82,6 @@ func normalizeAdminSeedConfig(cfg config.SeedAdminConfig) (config.SeedAdminConfi
 		return config.SeedAdminConfig{}, fmt.Errorf("last name is required: %w", domain.ErrValidation)
 	}
 
-	if len(cfg.Permissions) == 0 {
-		cfg.Permissions = []string{"*"}
-	}
-
 	return cfg, nil
 }
 
@@ -100,7 +90,6 @@ func buildCreateAdminParams(cfg config.SeedAdminConfig) domain.CreateUserParams 
 	password := cfg.Password
 
 	return domain.CreateUserParams{
-		Username:   cfg.Username,
 		Email:      &email,
 		Password:   &password,
 		Role:       domain.UserRoleAdmin,
@@ -108,10 +97,6 @@ func buildCreateAdminParams(cfg config.SeedAdminConfig) domain.CreateUserParams 
 		LastName:   cfg.LastName,
 		Patronymic: cfg.Patronymic,
 		Gender:     domain.GenderUnspecified,
-		AdminInfo: &domain.AdminInfo{
-			IsSuperAdmin: cfg.IsSuperAdmin,
-			Permissions:  append([]string(nil), cfg.Permissions...),
-		},
 	}
 }
 
@@ -123,18 +108,8 @@ func buildUpdateAdminParams(existing domain.User, cfg config.SeedAdminConfig) do
 		gender = domain.GenderUnspecified
 	}
 
-	adminInfo := &domain.AdminInfo{
-		IsSuperAdmin: cfg.IsSuperAdmin,
-		Permissions:  append([]string(nil), cfg.Permissions...),
-	}
-
-	if existing.AdminInfo != nil {
-		adminInfo.LastLoginAt = existing.AdminInfo.LastLoginAt
-	}
-
 	return domain.UpdateUserParams{
 		ID:           existing.ID,
-		Username:     cfg.Username,
 		Email:        &email,
 		GoogleID:     existing.GoogleID,
 		Password:     &password,
@@ -144,38 +119,13 @@ func buildUpdateAdminParams(existing domain.User, cfg config.SeedAdminConfig) do
 		Patronymic:   cfg.Patronymic,
 		Phone:        existing.Phone,
 		Gender:       gender,
+		BirthDate:    existing.BirthDate,
 		Address:      existing.Address,
 		City:         existing.City,
 		AvatarURL:    existing.AvatarURL,
 		IsActive:     true,
 		EmployeeInfo: nil,
-		AdminInfo:    adminInfo,
 		StudentInfo:  nil,
 		GuestInfo:    nil,
 	}
-}
-
-func normalizePermissions(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-
-	normalized := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			continue
-		}
-
-		if _, exists := seen[trimmed]; exists {
-			continue
-		}
-
-		seen[trimmed] = struct{}{}
-		normalized = append(normalized, trimmed)
-	}
-
-	return normalized
 }

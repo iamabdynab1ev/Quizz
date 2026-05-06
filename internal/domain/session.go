@@ -33,7 +33,6 @@ type GoogleLoginParams struct {
 }
 
 type RegisterParams struct {
-	Username   string  `json:"username,omitempty"`
 	Email      string  `json:"email"`
 	Password   string  `json:"password"`
 	FirstName  string  `json:"first_name"`
@@ -41,6 +40,7 @@ type RegisterParams struct {
 	Patronymic string  `json:"patronymic,omitempty"`
 	Phone      *string `json:"phone,omitempty"`
 	Gender     Gender  `json:"gender"`
+	IsMale     *bool   `json:"is_male,omitempty"`
 	Address    *string `json:"address,omitempty"`
 	City       *string `json:"city,omitempty"`
 	AvatarURL  *string `json:"avatar_url,omitempty"`
@@ -59,6 +59,7 @@ type UpdateProfileParams struct {
 	Patronymic   string  `json:"patronymic,omitempty"`
 	Phone        *string `json:"phone,omitempty"`
 	Gender       Gender  `json:"gender"`
+	IsMale       *bool   `json:"is_male,omitempty"`
 	Address      *string `json:"address,omitempty"`
 	City         *string `json:"city,omitempty"`
 	AvatarURL    *string `json:"avatar_url,omitempty"`

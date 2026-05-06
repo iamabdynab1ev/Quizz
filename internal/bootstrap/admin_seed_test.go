@@ -14,13 +14,13 @@ type stubAdminLookup struct {
 	err  error
 }
 
-func (s stubAdminLookup) GetByLogin(ctx context.Context, identifier string) (domain.User, error) {
+func (s stubAdminLookup) GetByEmail(context.Context, string) (domain.User, error) {
 	return s.user, s.err
 }
 
 type stubAdminWriter struct {
-	createFn func(ctx context.Context, params domain.CreateUserParams) (domain.User, error)
-	updateFn func(ctx context.Context, params domain.UpdateUserParams) (domain.User, error)
+	createFn func(context.Context, domain.CreateUserParams) (domain.User, error)
+	updateFn func(context.Context, domain.UpdateUserParams) (domain.User, error)
 }
 
 func (s stubAdminWriter) Create(ctx context.Context, params domain.CreateUserParams) (domain.User, error) {
@@ -42,8 +42,8 @@ func TestAdminSeederSeedCreatesMissingAdmin(t *testing.T) {
 					t.Fatalf("Create() role = %q, want %q", params.Role, domain.UserRoleAdmin)
 				}
 
-				if params.AdminInfo == nil || len(params.AdminInfo.Permissions) != 1 || params.AdminInfo.Permissions[0] != "*" {
-					t.Fatalf("Create() permissions = %#v, want [*]", params.AdminInfo)
+				if params.Email == nil || *params.Email != "admin@local.test" {
+					t.Fatalf("Create() email = %#v, want admin@local.test", params.Email)
 				}
 
 				return domain.User{ID: "seeded-admin"}, nil
@@ -56,13 +56,10 @@ func TestAdminSeederSeedCreatesMissingAdmin(t *testing.T) {
 	)
 
 	user, err := seeder.Seed(context.Background(), config.SeedAdminConfig{
-		Username:     "admin",
-		Email:        "admin@local.test",
-		Password:     "Admin123!",
-		FirstName:    "System",
-		LastName:     "Admin",
-		IsSuperAdmin: true,
-		Permissions:  []string{"*"},
+		Email:     "admin@local.test",
+		Password:  "Admin123!",
+		FirstName: "System",
+		LastName:  "Admin",
 	})
 	if err != nil {
 		t.Fatalf("Seed() error = %v", err)
@@ -80,7 +77,6 @@ func TestAdminSeederSeedUpdatesExistingAdmin(t *testing.T) {
 		stubAdminLookup{
 			user: domain.User{
 				ID:        "admin-id",
-				Username:  "admin",
 				Role:      domain.UserRoleAdmin,
 				FirstName: "Old",
 				LastName:  "Admin",
@@ -101,6 +97,10 @@ func TestAdminSeederSeedUpdatesExistingAdmin(t *testing.T) {
 					t.Fatalf("Update() role = %q, want %q", params.Role, domain.UserRoleAdmin)
 				}
 
+				if params.Email == nil || *params.Email != "admin@local.test" {
+					t.Fatalf("Update() email = %#v, want admin@local.test", params.Email)
+				}
+
 				if !params.IsActive {
 					t.Fatal("Update() is_active = false, want true")
 				}
@@ -111,13 +111,10 @@ func TestAdminSeederSeedUpdatesExistingAdmin(t *testing.T) {
 	)
 
 	user, err := seeder.Seed(context.Background(), config.SeedAdminConfig{
-		Username:     "admin",
-		Email:        "admin@local.test",
-		Password:     "Admin123!",
-		FirstName:    "System",
-		LastName:     "Admin",
-		IsSuperAdmin: true,
-		Permissions:  []string{"*"},
+		Email:     "admin@local.test",
+		Password:  "Admin123!",
+		FirstName: "System",
+		LastName:  "Admin",
 	})
 	if err != nil {
 		t.Fatalf("Seed() error = %v", err)
@@ -137,13 +134,10 @@ func TestAdminSeederSeedFailsOnUnexpectedLookupError(t *testing.T) {
 	)
 
 	if _, err := seeder.Seed(context.Background(), config.SeedAdminConfig{
-		Username:     "admin",
-		Email:        "admin@local.test",
-		Password:     "Admin123!",
-		FirstName:    "System",
-		LastName:     "Admin",
-		IsSuperAdmin: true,
-		Permissions:  []string{"*"},
+		Email:     "admin@local.test",
+		Password:  "Admin123!",
+		FirstName: "System",
+		LastName:  "Admin",
 	}); err == nil {
 		t.Fatal("Seed() error = nil, want non-nil")
 	}

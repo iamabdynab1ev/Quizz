@@ -79,14 +79,11 @@ type SeedConfig struct {
 }
 
 type SeedAdminConfig struct {
-	Username     string
-	Email        string
-	Password     string
-	FirstName    string
-	LastName     string
-	Patronymic   string
-	IsSuperAdmin bool
-	Permissions  []string
+	Email      string
+	Password   string
+	FirstName  string
+	LastName   string
+	Patronymic string
 }
 
 func Load() (Config, error) {
@@ -195,11 +192,6 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("config load migrate run on start: %w", err)
 	}
 
-	seedAdminSuperAdmin, err := getBool("SEED_ADMIN_IS_SUPER_ADMIN", true)
-	if err != nil {
-		return Config{}, fmt.Errorf("config load seed admin is super admin: %w", err)
-	}
-
 	databaseURL, err := getRequired("DATABASE_URL")
 	if err != nil {
 		return Config{}, fmt.Errorf("config load database url: %w", err)
@@ -254,14 +246,11 @@ func Load() (Config, error) {
 		Seed: SeedConfig{
 			RunOnStart: seedRunOnStart,
 			Admin: SeedAdminConfig{
-				Username:     getEnv("SEED_ADMIN_USERNAME", "admin"),
-				Email:        getEnv("SEED_ADMIN_EMAIL", "admin@local.test"),
-				Password:     getEnv("SEED_ADMIN_PASSWORD", "Admin123!"),
-				FirstName:    getEnv("SEED_ADMIN_FIRST_NAME", "System"),
-				LastName:     getEnv("SEED_ADMIN_LAST_NAME", "Admin"),
-				Patronymic:   getEnv("SEED_ADMIN_PATRONYMIC", ""),
-				IsSuperAdmin: seedAdminSuperAdmin,
-				Permissions:  getStringSlice("SEED_ADMIN_PERMISSIONS", []string{"*"}),
+				Email:      getEnv("SEED_ADMIN_EMAIL", "admin@local.test"),
+				Password:   getEnv("SEED_ADMIN_PASSWORD", "Admin123!"),
+				FirstName:  getEnv("SEED_ADMIN_FIRST_NAME", "System"),
+				LastName:   getEnv("SEED_ADMIN_LAST_NAME", "Admin"),
+				Patronymic: getEnv("SEED_ADMIN_PATRONYMIC", ""),
 			},
 		},
 	}, nil

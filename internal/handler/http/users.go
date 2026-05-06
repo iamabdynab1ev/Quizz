@@ -28,23 +28,20 @@ type UsersHandler struct {
 
 type userRequest struct {
 	ID           string               `json:"id,omitempty"`
-	Username     string               `json:"username,omitempty"`
 	Email        *string              `json:"email,omitempty"`
 	GoogleID     *string              `json:"google_id,omitempty"`
 	Password     *string              `json:"password,omitempty"`
-	Role         domain.UserRole      `json:"role"`
+	IsAdmin      *bool                `json:"is_admin,omitempty"`
 	FirstName    string               `json:"first_name"`
 	LastName     string               `json:"last_name"`
 	Patronymic   string               `json:"patronymic,omitempty"`
 	Phone        *string              `json:"phone,omitempty"`
-	Gender       domain.Gender        `json:"gender"`
+	IsMale       *bool                `json:"is_male,omitempty"`
 	Address      *string              `json:"address,omitempty"`
 	City         *string              `json:"city,omitempty"`
 	AvatarURL    *string              `json:"avatar_url,omitempty"`
 	BirthDate    *string              `json:"birth_date,omitempty"`
-	IsActive     *bool                `json:"is_active,omitempty"`
 	EmployeeInfo *domain.EmployeeInfo `json:"employee_info,omitempty"`
-	AdminInfo    *domain.AdminInfo    `json:"admin_info,omitempty"`
 	StudentInfo  *domain.StudentInfo  `json:"student_info,omitempty"`
 	GuestInfo    *domain.GuestInfo    `json:"guest_info,omitempty"`
 }
@@ -74,7 +71,7 @@ func (h *UsersHandler) CreateUser(w nethttp.ResponseWriter, r *nethttp.Request) 
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusCreated, user); err != nil {
+	if err := writeJSON(w, nethttp.StatusCreated, toUserResponse(user)); err != nil {
 		h.logger.ErrorContext(r.Context(), "create user response failed", slog.String("error", err.Error()))
 	}
 }
@@ -89,7 +86,7 @@ func (h *UsersHandler) GetUserByID(w nethttp.ResponseWriter, r *nethttp.Request)
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusOK, user); err != nil {
+	if err := writeJSON(w, nethttp.StatusOK, toUserResponse(user)); err != nil {
 		h.logger.ErrorContext(r.Context(), "get user response failed", slog.String("error", err.Error()))
 	}
 }
@@ -110,7 +107,7 @@ func (h *UsersHandler) ListUsers(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	if err := writePagedJSON(w, nethttp.StatusOK, users, total, filter.Limit, filter.Offset); err != nil {
+	if err := writePagedJSON(w, nethttp.StatusOK, toUserResponses(users), total, filter.Limit, filter.Offset); err != nil {
 		h.logger.ErrorContext(r.Context(), "list users response failed", slog.String("error", err.Error()))
 	}
 }
@@ -134,7 +131,7 @@ func (h *UsersHandler) UpdateUser(w nethttp.ResponseWriter, r *nethttp.Request) 
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusOK, user); err != nil {
+	if err := writeJSON(w, nethttp.StatusOK, toUserResponse(user)); err != nil {
 		h.logger.ErrorContext(r.Context(), "update user response failed", slog.String("error", err.Error()))
 	}
 }
@@ -152,9 +149,8 @@ func (h *UsersHandler) DeactivateUser(w nethttp.ResponseWriter, r *nethttp.Reque
 }
 
 func (r userRequest) toCreateParams() domain.CreateUserParams {
-	role := normalizeUserRequestRole(r.Role)
+	role := normalizeUserRequestRole(r.IsAdmin)
 	return domain.CreateUserParams{
-		Username:     fallbackUsername(r.Username, r.Email),
 		Email:        r.Email,
 		GoogleID:     r.GoogleID,
 		Password:     r.Password,
@@ -163,27 +159,22 @@ func (r userRequest) toCreateParams() domain.CreateUserParams {
 		LastName:     r.LastName,
 		Patronymic:   r.Patronymic,
 		Phone:        r.Phone,
-		Gender:       r.Gender,
+		Gender:       normalizeUserRequestGender(r.IsMale),
+		BirthDate:    r.BirthDate,
 		Address:      r.Address,
 		City:         r.City,
 		AvatarURL:    r.AvatarURL,
 		EmployeeInfo: infoForEmployee(role, r.EmployeeInfo),
-		AdminInfo:    infoForAdmin(role, r.AdminInfo),
 		StudentInfo:  infoForStudent(role, r.StudentInfo, r.BirthDate),
 		GuestInfo:    infoForGuest(role, r.GuestInfo),
 	}
 }
 
 func (r userRequest) toUpdateParams() domain.UpdateUserParams {
-	role := normalizeUserRequestRole(r.Role)
-	isActive := true
-	if r.IsActive != nil {
-		isActive = *r.IsActive
-	}
+	role := normalizeUserRequestRole(r.IsAdmin)
 
 	return domain.UpdateUserParams{
 		ID:           r.ID,
-		Username:     fallbackUsername(r.Username, r.Email),
 		Email:        r.Email,
 		GoogleID:     r.GoogleID,
 		Password:     r.Password,
@@ -192,50 +183,42 @@ func (r userRequest) toUpdateParams() domain.UpdateUserParams {
 		LastName:     r.LastName,
 		Patronymic:   r.Patronymic,
 		Phone:        r.Phone,
-		Gender:       r.Gender,
+		Gender:       normalizeUserRequestGender(r.IsMale),
+		BirthDate:    r.BirthDate,
 		Address:      r.Address,
 		City:         r.City,
 		AvatarURL:    r.AvatarURL,
-		IsActive:     isActive,
+		IsActive:     true,
 		EmployeeInfo: infoForEmployee(role, r.EmployeeInfo),
-		AdminInfo:    infoForAdmin(role, r.AdminInfo),
 		StudentInfo:  infoForStudent(role, r.StudentInfo, r.BirthDate),
 		GuestInfo:    infoForGuest(role, r.GuestInfo),
 	}
 }
 
-func normalizeUserRequestRole(role domain.UserRole) domain.UserRole {
-	switch domain.UserRole(strings.TrimSpace(string(role))) {
-	case "", "user":
+func normalizeUserRequestRole(isAdmin *bool) domain.UserRole {
+	if isAdmin != nil {
+		if *isAdmin {
+			return domain.UserRoleAdmin
+		}
 		return domain.UserRoleStudent
-	default:
-		return domain.UserRole(strings.TrimSpace(string(role)))
 	}
+
+	return domain.UserRoleStudent
 }
 
-func fallbackUsername(username string, email *string) string {
-	username = strings.TrimSpace(username)
-	if username != "" {
-		return username
+func normalizeUserRequestGender(isMale *bool) domain.Gender {
+	if isMale != nil {
+		if *isMale {
+			return domain.GenderMale
+		}
+		return domain.GenderFemale
 	}
 
-	if email == nil {
-		return ""
-	}
-
-	return strings.TrimSpace(*email)
+	return domain.GenderUnspecified
 }
 
 func infoForEmployee(role domain.UserRole, value *domain.EmployeeInfo) *domain.EmployeeInfo {
 	if role == domain.UserRoleEmployee {
-		return value
-	}
-
-	return nil
-}
-
-func infoForAdmin(role domain.UserRole, value *domain.AdminInfo) *domain.AdminInfo {
-	if role == domain.UserRoleAdmin {
 		return value
 	}
 
@@ -276,14 +259,6 @@ func (h *UsersHandler) parseUserListFilter(r *nethttp.Request) (domain.UserListF
 	if roleValue := query.Get("role"); roleValue != "" {
 		role := domain.UserRole(roleValue)
 		filter.Role = &role
-	}
-
-	if isActiveValue := query.Get("is_active"); isActiveValue != "" {
-		parsed, err := strconv.ParseBool(isActiveValue)
-		if err != nil {
-			return domain.UserListFilter{}, fmt.Errorf("is_active must be boolean")
-		}
-		filter.IsActive = &parsed
 	}
 
 	if limitValue := query.Get("limit"); limitValue != "" {

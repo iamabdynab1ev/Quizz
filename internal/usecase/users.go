@@ -59,8 +59,8 @@ func (u *UserUseCase) Create(ctx context.Context, params domain.CreateUserParams
 	if u.audit != nil {
 		u.audit.Log(ctx, domain.AppEventUserCreated, map[string]any{
 			"user_id":  user.ID,
-			"username": user.Username,
-			"role":     user.Role,
+			"email":    user.Email,
+			"is_admin": user.Role == domain.UserRoleAdmin,
 		})
 	}
 
@@ -76,6 +76,9 @@ func (u *UserUseCase) GetByID(ctx context.Context, userID string) (domain.User, 
 	user, err := u.repository.GetByID(ctx, userID)
 	if err != nil {
 		return domain.User{}, fmt.Errorf("usecase users get by id: %w", err)
+	}
+	if !user.IsActive {
+		return domain.User{}, fmt.Errorf("usecase users get by id inactive: %w", domain.ErrNotFound)
 	}
 
 	return user, nil
@@ -118,8 +121,8 @@ func (u *UserUseCase) Update(ctx context.Context, params domain.UpdateUserParams
 	if u.audit != nil {
 		u.audit.Log(ctx, domain.AppEventUserUpdated, map[string]any{
 			"user_id":  user.ID,
-			"username": user.Username,
-			"role":     user.Role,
+			"email":    user.Email,
+			"is_admin": user.Role == domain.UserRoleAdmin,
 		})
 	}
 
@@ -146,7 +149,6 @@ func (u *UserUseCase) Deactivate(ctx context.Context, userID string) error {
 }
 
 func normalizeCreateUserParams(params domain.CreateUserParams) (domain.CreateUserParams, error) {
-	params.Username = strings.TrimSpace(params.Username)
 	params.FirstName = strings.TrimSpace(params.FirstName)
 	params.LastName = strings.TrimSpace(params.LastName)
 	params.Patronymic = strings.TrimSpace(params.Patronymic)
@@ -155,12 +157,15 @@ func normalizeCreateUserParams(params domain.CreateUserParams) (domain.CreateUse
 	params.Password = normalizeOptionalString(params.Password)
 	params.PasswordHash = normalizeOptionalString(params.PasswordHash)
 	params.Phone = normalizeOptionalString(params.Phone)
+	params.BirthDate = normalizeOptionalString(params.BirthDate)
 	params.Address = normalizeOptionalString(params.Address)
 	params.City = normalizeOptionalString(params.City)
 	params.AvatarURL = normalizeOptionalString(params.AvatarURL)
 
 	var validation fieldValidationBuilder
-	validation.addRequired("username", params.Username, "Логин или email пользователя")
+	if params.Email == nil {
+		validation.add("email", "required", "Email обязателен")
+	}
 
 	if params.Password != nil && len(*params.Password) < 8 {
 		validation.add("password", "too_short", "Пароль должен быть минимум 8 символов")
@@ -178,11 +183,13 @@ func normalizeCreateUserParams(params domain.CreateUserParams) (domain.CreateUse
 		validation.add("gender", "invalid_enum", "Пол должен быть male, female, other или unspecified")
 	}
 
+	addDateValidation(&validation, "birth_date", params.BirthDate, "Дата рождения")
+
 	if err := validateEmail(params.Email); err != nil {
 		validation.add("email", "invalid_email", "Email указан неверно")
 	}
 
-	if err := validateRolePayloads(params.Role, params.EmployeeInfo, params.AdminInfo, params.StudentInfo, params.GuestInfo); err != nil {
+	if err := validateRolePayloads(params.Role, params.EmployeeInfo, params.StudentInfo, params.GuestInfo); err != nil {
 		return domain.CreateUserParams{}, err
 	}
 	addStudentInfoDateValidation(&validation, params.StudentInfo)
@@ -198,7 +205,6 @@ func normalizeCreateUserParams(params domain.CreateUserParams) (domain.CreateUse
 
 func normalizeUpdateUserParams(params domain.UpdateUserParams) (domain.UpdateUserParams, error) {
 	params.ID = strings.TrimSpace(params.ID)
-	params.Username = strings.TrimSpace(params.Username)
 	params.FirstName = strings.TrimSpace(params.FirstName)
 	params.LastName = strings.TrimSpace(params.LastName)
 	params.Patronymic = strings.TrimSpace(params.Patronymic)
@@ -207,14 +213,17 @@ func normalizeUpdateUserParams(params domain.UpdateUserParams) (domain.UpdateUse
 	params.Password = normalizeOptionalString(params.Password)
 	params.PasswordHash = normalizeOptionalString(params.PasswordHash)
 	params.Phone = normalizeOptionalString(params.Phone)
+	params.BirthDate = normalizeOptionalString(params.BirthDate)
 	params.Address = normalizeOptionalString(params.Address)
 	params.City = normalizeOptionalString(params.City)
 	params.AvatarURL = normalizeOptionalString(params.AvatarURL)
 
 	var validation fieldValidationBuilder
-	validation.addRequired("id", params.ID, "ID пользователя")
-	validation.addRequired("username", params.Username, "Логин или email пользователя")
+	if params.Email == nil {
+		validation.add("email", "required", "Email обязателен")
+	}
 
+	validation.addRequired("id", params.ID, "ID пользователя")
 	if params.Password != nil && len(*params.Password) < 8 {
 		validation.add("password", "too_short", "Пароль должен быть минимум 8 символов")
 	}
@@ -231,11 +240,13 @@ func normalizeUpdateUserParams(params domain.UpdateUserParams) (domain.UpdateUse
 		validation.add("gender", "invalid_enum", "Пол должен быть male, female, other или unspecified")
 	}
 
+	addDateValidation(&validation, "birth_date", params.BirthDate, "Дата рождения")
+
 	if err := validateEmail(params.Email); err != nil {
 		validation.add("email", "invalid_email", "Email указан неверно")
 	}
 
-	if err := validateRolePayloads(params.Role, params.EmployeeInfo, params.AdminInfo, params.StudentInfo, params.GuestInfo); err != nil {
+	if err := validateRolePayloads(params.Role, params.EmployeeInfo, params.StudentInfo, params.GuestInfo); err != nil {
 		return domain.UpdateUserParams{}, err
 	}
 	addStudentInfoDateValidation(&validation, params.StudentInfo)
@@ -259,6 +270,8 @@ func normalizeUserListFilter(filter domain.UserListFilter) (domain.UserListFilte
 		}
 		filter.Role = &role
 	}
+	active := true
+	filter.IsActive = &active
 
 	if filter.Limit <= 0 {
 		filter.Limit = 20
@@ -278,17 +291,12 @@ func normalizeUserListFilter(filter domain.UserListFilter) (domain.UserListFilte
 func validateRolePayloads(
 	role domain.UserRole,
 	employeeInfo *domain.EmployeeInfo,
-	adminInfo *domain.AdminInfo,
 	studentInfo *domain.StudentInfo,
 	guestInfo *domain.GuestInfo,
 ) error {
 	var validation fieldValidationBuilder
 	if role != domain.UserRoleEmployee && employeeInfo != nil {
 		validation.add("employee_info", "forbidden_for_role", "employee_info можно передавать только для роли employee")
-	}
-
-	if role != domain.UserRoleAdmin && adminInfo != nil {
-		validation.add("admin_info", "forbidden_for_role", "admin_info можно передавать только для роли admin")
 	}
 
 	if role != domain.UserRoleStudent && studentInfo != nil {
@@ -313,10 +321,6 @@ func normalizeUserRoleDetails(params *domain.CreateUserParams) {
 		params.EmployeeInfo.Notes = strings.TrimSpace(params.EmployeeInfo.Notes)
 	}
 
-	if params.AdminInfo != nil {
-		params.AdminInfo.Permissions = normalizeStringSlice(params.AdminInfo.Permissions)
-	}
-
 	if params.StudentInfo != nil {
 		params.StudentInfo.StudentID = strings.TrimSpace(params.StudentInfo.StudentID)
 		params.StudentInfo.GroupName = strings.TrimSpace(params.StudentInfo.GroupName)
@@ -339,10 +343,6 @@ func normalizeUserRoleDetailsForUpdate(params *domain.UpdateUserParams) {
 		params.EmployeeInfo.EmployeeID = strings.TrimSpace(params.EmployeeInfo.EmployeeID)
 		params.EmployeeInfo.HireDate = strings.TrimSpace(params.EmployeeInfo.HireDate)
 		params.EmployeeInfo.Notes = strings.TrimSpace(params.EmployeeInfo.Notes)
-	}
-
-	if params.AdminInfo != nil {
-		params.AdminInfo.Permissions = normalizeStringSlice(params.AdminInfo.Permissions)
 	}
 
 	if params.StudentInfo != nil {

@@ -70,7 +70,7 @@ func (h *AttemptsHandler) SubmitAttempt(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusCreated, attempt); err != nil {
+	if err := writeJSON(w, nethttp.StatusCreated, toAttemptResponse(attempt)); err != nil {
 		h.logger.ErrorContext(r.Context(), "submit attempt response failed", slog.String("error", err.Error()))
 	}
 }
@@ -93,7 +93,7 @@ func (h *AttemptsHandler) GetAttemptByID(w nethttp.ResponseWriter, r *nethttp.Re
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusOK, attempt); err != nil {
+	if err := writeJSON(w, nethttp.StatusOK, toAttemptResponse(attempt)); err != nil {
 		h.logger.ErrorContext(r.Context(), "get attempt response failed", slog.String("error", err.Error()))
 	}
 }
@@ -123,7 +123,7 @@ func (h *AttemptsHandler) ListAttempts(w nethttp.ResponseWriter, r *nethttp.Requ
 		return
 	}
 
-	if err := writePagedJSON(w, nethttp.StatusOK, attempts, total, filter.Limit, filter.Offset); err != nil {
+	if err := writePagedJSON(w, nethttp.StatusOK, toAttemptResponses(attempts), total, filter.Limit, filter.Offset); err != nil {
 		h.logger.ErrorContext(r.Context(), "list attempts response failed", slog.String("error", err.Error()))
 	}
 }
@@ -163,7 +163,7 @@ func (h *AttemptsHandler) ReviewAttempt(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 
-	if err := writeJSON(w, nethttp.StatusOK, attempt); err != nil {
+	if err := writeJSON(w, nethttp.StatusOK, toAttemptResponse(attempt)); err != nil {
 		h.logger.ErrorContext(r.Context(), "review attempt response failed", slog.String("error", err.Error()))
 	}
 }

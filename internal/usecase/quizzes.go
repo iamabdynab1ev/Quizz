@@ -63,6 +63,9 @@ func (u *QuizUseCase) GetByID(ctx context.Context, quizID string) (domain.Quiz, 
 	if err != nil {
 		return domain.Quiz{}, fmt.Errorf("usecase quizzes get by id: %w", err)
 	}
+	if quiz.Status == domain.QuizStatusArchived {
+		return domain.Quiz{}, fmt.Errorf("usecase quizzes get by id archived: %w", domain.ErrNotFound)
+	}
 
 	return quiz, nil
 }
@@ -212,8 +215,12 @@ func normalizeQuizListFilter(filter domain.QuizListFilter) (domain.QuizListFilte
 		if !status.IsValid() {
 			return domain.QuizListFilter{}, fmt.Errorf("status filter is invalid: %w", domain.ErrValidation)
 		}
+		if status == domain.QuizStatusArchived {
+			return domain.QuizListFilter{}, fmt.Errorf("archived quizzes are not available: %w", domain.ErrValidation)
+		}
 		filter.Status = &status
 	}
+	filter.IncludeArchived = false
 
 	if filter.Category != nil {
 		filter.Category = normalizeOptionalString(filter.Category)

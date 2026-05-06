@@ -174,6 +174,9 @@ func normalizeCreateUserParams(params domain.CreateUserParams) (domain.CreateUse
 	if !params.Role.IsValid() {
 		validation.add("role", "invalid_enum", "Роль должна быть admin, employee, student или guest")
 	}
+	if params.IsSuperAdmin && params.Role != domain.UserRoleAdmin {
+		validation.add("is_super_admin", "forbidden_for_role", "Супер-админ должен иметь роль admin")
+	}
 
 	if params.Gender == "" {
 		params.Gender = domain.GenderUnspecified
@@ -230,6 +233,9 @@ func normalizeUpdateUserParams(params domain.UpdateUserParams) (domain.UpdateUse
 
 	if !params.Role.IsValid() {
 		validation.add("role", "invalid_enum", "Роль должна быть admin, employee, student или guest")
+	}
+	if params.IsSuperAdmin != nil && *params.IsSuperAdmin && params.Role != domain.UserRoleAdmin {
+		validation.add("is_super_admin", "forbidden_for_role", "Супер-админ должен иметь роль admin")
 	}
 
 	if params.Gender == "" {

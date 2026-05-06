@@ -19,6 +19,7 @@ const userSelectColumns = `
 	u.google_id,
 	u.password_hash,
 	u.role,
+	u.is_super_admin,
 	u.first_name,
 	u.last_name,
 	u.patronymic,
@@ -79,6 +80,7 @@ func (r *UserRepository) Create(ctx context.Context, params domain.CreateUserPar
 			google_id,
 			password_hash,
 			role,
+			is_super_admin,
 			first_name,
 			last_name,
 			patronymic,
@@ -89,7 +91,7 @@ func (r *UserRepository) Create(ctx context.Context, params domain.CreateUserPar
 			city,
 			avatar_url
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, '')::date, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, '')::date, $12, $13, $14
 		)
 		RETURNING id
 	`,
@@ -97,6 +99,7 @@ func (r *UserRepository) Create(ctx context.Context, params domain.CreateUserPar
 		nullableStringPointerForWrite(params.GoogleID),
 		nullableStringPointerForWrite(params.PasswordHash),
 		string(params.Role),
+		params.IsSuperAdmin,
 		nullableStringForWrite(params.FirstName),
 		nullableStringForWrite(params.LastName),
 		nullableStringForWrite(params.Patronymic),
@@ -300,17 +303,18 @@ func (r *UserRepository) Update(ctx context.Context, params domain.UpdateUserPar
 			email = $2,
 			google_id = $3,
 			password_hash = COALESCE($4, password_hash),
-			role = $5,
-			first_name = $6,
-			last_name = $7,
-			patronymic = $8,
-			phone = $9,
-			gender = $10,
-			birth_date = NULLIF($11, '')::date,
-			address = $12,
-			city = $13,
-			avatar_url = $14,
-			is_active = $15,
+			role = CASE WHEN is_super_admin THEN 'admin'::user_role ELSE $5::user_role END,
+			is_super_admin = CASE WHEN is_super_admin THEN true ELSE COALESCE($6, is_super_admin) END,
+			first_name = $7,
+			last_name = $8,
+			patronymic = $9,
+			phone = $10,
+			gender = $11,
+			birth_date = NULLIF($12, '')::date,
+			address = $13,
+			city = $14,
+			avatar_url = $15,
+			is_active = $16,
 			updated_at = NOW()
 		WHERE id = $1
 		RETURNING id
@@ -320,6 +324,7 @@ func (r *UserRepository) Update(ctx context.Context, params domain.UpdateUserPar
 		nullableStringPointerForWrite(params.GoogleID),
 		nullableStringPointerForWrite(params.PasswordHash),
 		string(params.Role),
+		nullableBoolPointerForWrite(params.IsSuperAdmin),
 		nullableStringForWrite(params.FirstName),
 		nullableStringForWrite(params.LastName),
 		nullableStringForWrite(params.Patronymic),
@@ -549,6 +554,7 @@ func scanUser(scanner userRowScanner) (domain.User, error) {
 		&googleID,
 		&passwordHash,
 		&role,
+		&user.IsSuperAdmin,
 		&firstName,
 		&lastName,
 		&patronymic,

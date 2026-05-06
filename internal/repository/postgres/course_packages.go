@@ -149,7 +149,9 @@ func (r *CoursePackageRepository) insertQuiz(ctx context.Context, tx pgx.Tx, par
 			platforms,
 			time_limit_minutes,
 			passing_score,
+			passing_points,
 			max_attempts,
+			retake_cooldown_days,
 			shuffle_questions,
 			show_results,
 			allow_retry
@@ -164,7 +166,9 @@ func (r *CoursePackageRepository) insertQuiz(ctx context.Context, tx pgx.Tx, par
 			$8,
 			$9,
 			$10,
-			$11
+			$11,
+			$12,
+			$13
 		)
 		RETURNING id
 	`,
@@ -175,7 +179,9 @@ func (r *CoursePackageRepository) insertQuiz(ctx context.Context, tx pgx.Tx, par
 		platformsToStrings(params.Platforms),
 		nullableIntPointerForWrite(params.TimeLimitMinutes),
 		params.PassingScore,
+		params.PassingPoints,
 		params.MaxAttempts,
+		params.RetakeCooldownDays,
 		params.ShuffleQuestions,
 		params.ShowResults,
 		params.AllowRetry,

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"lms-arvand-backend/internal/domain"
 
@@ -36,17 +37,45 @@ func (r *AttemptRepository) GetQuizForAttempt(ctx context.Context, quizID string
 	return quiz, nil
 }
 
-func (r *AttemptRepository) CountUserQuizAttempts(ctx context.Context, quizID, userID string) (int, error) {
-	var count int
-	if err := r.pool.QueryRow(ctx, `
-		SELECT COUNT(*)
+func (r *AttemptRepository) GetUserQuizAttemptWindow(ctx context.Context, quizID, userID string, since *time.Time) (domain.AttemptWindow, error) {
+	query := strings.Builder{}
+	query.WriteString(`
+		SELECT COUNT(*), MIN(started_at)
 		FROM attempts
 		WHERE quiz_id = $1 AND user_id = $2
-	`, quizID, userID).Scan(&count); err != nil {
-		return 0, fmt.Errorf("repository postgres attempts count user quiz attempts: %w", err)
+	`)
+
+	args := []any{quizID, userID}
+	if since != nil {
+		query.WriteString(" AND started_at > $3")
+		args = append(args, *since)
 	}
 
-	return count, nil
+	var count int
+	var earliestStartedAt sql.NullTime
+	if err := r.pool.QueryRow(ctx, query.String(), args...).Scan(&count, &earliestStartedAt); err != nil {
+		return domain.AttemptWindow{}, fmt.Errorf("repository postgres attempts get user quiz attempt window: %w", err)
+	}
+
+	return domain.AttemptWindow{
+		Count:             count,
+		EarliestStartedAt: optionalTime(earliestStartedAt),
+	}, nil
+}
+
+func (r *AttemptRepository) UserHasCourseCertificate(ctx context.Context, courseID, userID string) (bool, error) {
+	var exists bool
+	if err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM certificates
+			WHERE course_id = $1 AND user_id = $2
+		)
+	`, courseID, userID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("repository postgres attempts user has course certificate: %w", err)
+	}
+
+	return exists, nil
 }
 
 func (r *AttemptRepository) CreateAttempt(ctx context.Context, params domain.CreateAttemptRecordParams) (domain.Attempt, error) {

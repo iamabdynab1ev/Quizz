@@ -43,6 +43,7 @@ type User struct {
 	Email        *string       `json:"email,omitempty"`
 	GoogleID     *string       `json:"google_id,omitempty"`
 	Role         UserRole      `json:"role"`
+	IsSuperAdmin bool          `json:"is_super_admin"`
 	FirstName    string        `json:"first_name"`
 	LastName     string        `json:"last_name"`
 	Patronymic   string        `json:"patronymic,omitempty"`
@@ -90,6 +91,7 @@ type CreateUserParams struct {
 	Password     *string       `json:"password,omitempty"`
 	PasswordHash *string       `json:"-"`
 	Role         UserRole      `json:"role"`
+	IsSuperAdmin bool          `json:"is_super_admin"`
 	FirstName    string        `json:"first_name"`
 	LastName     string        `json:"last_name"`
 	Patronymic   string        `json:"patronymic,omitempty"`
@@ -111,6 +113,7 @@ type UpdateUserParams struct {
 	Password     *string       `json:"password,omitempty"`
 	PasswordHash *string       `json:"-"`
 	Role         UserRole      `json:"role"`
+	IsSuperAdmin *bool         `json:"is_super_admin,omitempty"`
 	FirstName    string        `json:"first_name"`
 	LastName     string        `json:"last_name"`
 	Patronymic   string        `json:"patronymic,omitempty"`

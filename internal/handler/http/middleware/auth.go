@@ -75,6 +75,25 @@ func RequireRoles(roles ...domain.UserRole) func(next nethttp.Handler) nethttp.H
 	}
 }
 
+func RequireSuperAdmin() func(next nethttp.Handler) nethttp.Handler {
+	return func(next nethttp.Handler) nethttp.Handler {
+		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+			identity, ok := CurrentAuthIdentity(r.Context())
+			if !ok {
+				writeMiddlewareError(w, nethttp.StatusUnauthorized, "unauthorized", "Требуется авторизация")
+				return
+			}
+
+			if identity.User.Role != domain.UserRoleAdmin || !identity.User.IsSuperAdmin {
+				writeMiddlewareError(w, nethttp.StatusForbidden, "forbidden", "Недостаточно прав")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func extractBearerToken(value string) (string, bool) {
 	if value == "" {
 		return "", false

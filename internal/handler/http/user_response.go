@@ -11,6 +11,7 @@ type userResponse struct {
 	Email        *string              `json:"email,omitempty"`
 	GoogleID     *string              `json:"google_id,omitempty"`
 	IsAdmin      bool                 `json:"is_admin"`
+	IsSuperAdmin *bool                `json:"is_super_admin,omitempty"`
 	FirstName    string               `json:"first_name"`
 	LastName     string               `json:"last_name"`
 	Patronymic   string               `json:"patronymic,omitempty"`
@@ -47,6 +48,7 @@ func toUserResponse(user domain.User) userResponse {
 		Email:        user.Email,
 		GoogleID:     user.GoogleID,
 		IsAdmin:      user.Role == domain.UserRoleAdmin,
+		IsSuperAdmin: superAdminResponseValue(user.IsSuperAdmin),
 		FirstName:    user.FirstName,
 		LastName:     user.LastName,
 		Patronymic:   user.Patronymic,
@@ -62,6 +64,15 @@ func toUserResponse(user domain.User) userResponse {
 		StudentInfo:  user.StudentInfo,
 		GuestInfo:    user.GuestInfo,
 	}
+}
+
+func superAdminResponseValue(isSuperAdmin bool) *bool {
+	if !isSuperAdmin {
+		return nil
+	}
+
+	value := true
+	return &value
 }
 
 func toUserResponses(users []domain.User) []userResponse {

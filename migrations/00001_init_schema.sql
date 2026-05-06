@@ -42,6 +42,7 @@ CREATE TABLE users (
     google_id     TEXT UNIQUE,          -- Интеграция с OAuth
     password_hash TEXT,                 -- Может быть NULL если зашел через Google
     role          user_role NOT NULL DEFAULT 'student',
+    is_super_admin BOOLEAN NOT NULL DEFAULT false,
     first_name    TEXT,
     last_name     TEXT,
     patronymic    TEXT,
@@ -140,7 +141,9 @@ CREATE TABLE quizzes (
     platforms          platform[] NOT NULL DEFAULT '{}',
     time_limit_minutes INT,
     passing_score      INT NOT NULL DEFAULT 80, -- Процент для успешной сдачи
+    passing_points     NUMERIC(8,2) NOT NULL DEFAULT 0,
     max_attempts       INT NOT NULL DEFAULT 3,  -- Требование по попыткам
+    retake_cooldown_days INT NOT NULL DEFAULT 30,
     shuffle_questions  BOOLEAN NOT NULL DEFAULT false,
     show_results       BOOLEAN NOT NULL DEFAULT true,
     allow_retry        BOOLEAN NOT NULL DEFAULT true,
@@ -203,6 +206,7 @@ CREATE TABLE attempts (
     passed              BOOLEAN NOT NULL DEFAULT false,
     needs_review        BOOLEAN NOT NULL DEFAULT false
 );
+CREATE INDEX idx_attempts_quiz_user_started_at ON attempts (quiz_id, user_id, started_at DESC);
 
 -- =======================================================
 -- 6. СЕРТИФИКАТЫ (Важнейший банковский документ)
@@ -218,6 +222,7 @@ CREATE TABLE certificates (
     issued_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     pdf_url        TEXT
 );
+CREATE INDEX idx_certificates_course_user ON certificates (course_id, user_id);
 
 -- =======================================================
 -- 7. ЭКОСИСТЕМА (Вебхуки, логи, отзывы)

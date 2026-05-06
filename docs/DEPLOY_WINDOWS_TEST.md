@@ -1,128 +1,180 @@
-# Windows Test Deploy
+﻿# Windows Test Deploy
 
-Тестовый запуск на Windows-сервере:
+Тестовая схема для Windows-сервера:
 
-- frontend: `http://192.168.10.79:4041`
-- backend: `127.0.0.1:9000`
-- nginx for Windows слушает один порт `4041`
+```text
+Browser -> http://192.168.10.79:4041
+             -> nginx for Windows
+                  /api/v1/* -> Go backend 127.0.0.1:9000
+                  /health   -> Go backend 127.0.0.1:9000
+                  /*        -> React build
+```
 
-## 1. Что собирать
+Снаружи один порт: `4041`.
 
-Нужны два артефакта:
+Backend не открывается наружу, он слушает только:
 
-- Go backend binary для Windows: `api.exe`
-- React build: папка `dist/`
+```env
+HTTP_ADDRESS=127.0.0.1:9000
+```
 
-## 2. Backend
+## Что собирать
 
-Собирай Windows binary на своей машине или на сервере:
+Backend:
 
 ```powershell
 go build -o bin/api.exe ./cmd/api
 ```
 
-Потом положи на сервер в, например:
+Frontend:
+
+```powershell
+npm run build
+```
+
+Нужны два результата:
+
+- `bin/api.exe`
+- frontend папка `dist/`
+
+## Куда положить на сервере
+
+Пример:
 
 ```text
 C:\projects\Quiz\bin\api.exe
+C:\projects\Quiz\.env
+C:\var\www\arvand\index.html
+C:\var\www\arvand\assets\...
 ```
 
-Используй env из [deploy/windows-test/backend.env.example](../deploy/windows-test/backend.env.example).
+## Backend `.env` на сервере
 
-Ключевые значения:
+```env
+APP_NAME=QUIZ
+APP_ENV=development
+LOG_LEVEL=INFO
 
-- `HTTP_ADDRESS=127.0.0.1:9000`
-- `HTTP_CORS_ALLOWED_ORIGINS=*`
-- `AUTH_SESSION_CACHE_TTL=5m`
-- `MIGRATE_RUN_ON_START=true`
-- `SEED_RUN_ON_START=true`
+HTTP_ADDRESS=127.0.0.1:9000
+HTTP_CORS_ALLOWED_ORIGINS=http://192.168.10.79:4041,http://localhost:4041
 
-Важно:
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5433/lms_arvand?sslmode=disable
 
-- backend читает настройки только из env-файла или переменных окружения
-- если меняется Postgres, порт, пароль или адрес сервера, правишь только `.env`
-- после изменения `.env` нужен перезапуск `api.exe`
-- runtime hot-reload env сейчас не делается
+MIGRATE_RUN_ON_START=true
+MIGRATIONS_DIR=migrations
+SEED_RUN_ON_START=true
 
-## 3. Как запустить backend на Windows
+SEED_ADMIN_EMAIL=admin@local.test
+SEED_ADMIN_PASSWORD=Admin123!
+SEED_ADMIN_FIRST_NAME=System
+SEED_ADMIN_LAST_NAME=Admin
 
-Самый простой вариант для теста:
+AUTH_LOGIN_LOCKOUT_ENABLED=false
+AUTH_PASSWORD_RESET_RETURN_TOKEN=true
+AUTH_GOOGLE_DEFAULT_ROLE=student
+GOOGLE_CLIENT_ID=
+
+UPLOADS_DIR=uploads
+UPLOAD_MAX_SIZE_MB=20
+```
+
+Если PostgreSQL на `5432`, поменять только `DATABASE_URL`.
+
+## Запуск backend вручную
 
 ```powershell
 cd C:\projects\Quiz
 .\bin\api.exe
 ```
 
-Если хочешь без ручного поиска `.env`, используй [deploy/windows-test/run-api.ps1](../deploy/windows-test/run-api.ps1):
+Проверить:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\deploy\windows-test\run-api.ps1 -Root C:\projects\Quiz -ExePath C:\projects\Quiz\bin\api.exe
+Invoke-RestMethod http://127.0.0.1:9000/health
+Invoke-RestMethod http://127.0.0.1:9000/api/v1/health
 ```
 
-Лучше как service:
+## Frontend build
 
-- поставить `NSSM`
-- создать сервис на `C:\projects\Quiz\bin\api.exe`
-- рабочая папка: `C:\projects\Quiz`
-- env подать через `.env` файл рядом с бинарником
-
-Если `.env` не подхватывается, проверь:
-
-- файл действительно называется `.env`, а не `.env.txt`
-- `ENV_FILE` не задан на старое значение
-- бинарник пересобран после фикса поиска env
-
-Пример переменной подключения к PostgreSQL:
-
-```env
-DATABASE_URL=postgres://postgres:YOUR_PASSWORD@127.0.0.1:5432/lms_arvand?sslmode=disable
-```
-
-## 4. Nginx for Windows
-
-Положи [deploy/windows-test/nginx.conf](../deploy/windows-test/nginx.conf) в nginx-конфиг.
-
-Важно:
-
-- `root` должен указывать на папку с React build, например `C:/var/www/arvand`
-- nginx слушает `4041`
-- backend живет только на `127.0.0.1:9000`
-
-## 5. Frontend
-
-Для React в тесте можно использовать относительный API path:
+Для одного origin через nginx:
 
 ```env
 VITE_API_URL=/api/v1
 ```
 
-Собери фронт:
+Собрать:
 
-```bash
+```powershell
 npm run build
 ```
 
-Потом скопируй `dist/*` в папку, которую читает nginx, например:
+Содержимое `dist/` скопировать в:
 
 ```text
 C:\var\www\arvand
 ```
 
-## 6. Итоговая схема
+## Nginx for Windows
 
-```text
-Browser
-  -> http://192.168.10.79:4041
-       -> nginx for Windows
-            /api/v1/* -> Go backend 127.0.0.1:9000
-            /health   -> Go backend 127.0.0.1:9000
-            /*        -> React static files
+Пример конфига:
+
+```nginx
+server {
+    listen 4041;
+    server_name 192.168.10.79 localhost;
+
+    root C:/var/www/arvand;
+    index index.html;
+
+    location /api/v1/ {
+        proxy_pass http://127.0.0.1:9000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /health {
+        proxy_pass http://127.0.0.1:9000;
+    }
+
+    location /uploads/ {
+        proxy_pass http://127.0.0.1:9000;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
 ```
 
-## 7. Что делать после теста
+## Проверка после запуска
 
-Когда всё проверишь на HTTP:
+Открыть:
 
-- добавить HTTPS certificate в nginx
-- заменить `listen 4041` на `listen 4041 ssl`
-- оставить backend без публичного доступа
+```text
+http://192.168.10.79:4041
+```
+
+Проверить:
+
+1. login `admin@local.test / Admin123!`;
+2. `GET /api/v1/auth/me`;
+3. список курсов;
+4. создание курса;
+5. создание теста;
+6. сдача теста;
+7. сертификат.
+
+## После теста
+
+Когда HTTP-схема проверена:
+
+- добавить TLS certificate;
+- перевести nginx на `listen 4041 ssl`;
+- оставить backend на `127.0.0.1:9000`;
+- выключить тестовые настройки:
+  - `AUTH_LOGIN_LOCKOUT_ENABLED=true`;
+  - `AUTH_PASSWORD_RESET_RETURN_TOKEN=false`;
+  - сменить `SEED_ADMIN_PASSWORD`.

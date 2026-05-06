@@ -183,6 +183,7 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 		&googleID,
 		&passwordHash,
 		&role,
+		&user.IsSuperAdmin,
 		&firstName,
 		&lastName,
 		&patronymic,

@@ -65,6 +65,14 @@ func boolPointerForWrite(value *bool) any {
 	return *value
 }
 
+func nullableBoolPointerForWrite(value *bool) any {
+	if value == nil {
+		return nil
+	}
+
+	return *value
+}
+
 func optionalString(value sql.NullString) *string {
 	if !value.Valid {
 		return nil

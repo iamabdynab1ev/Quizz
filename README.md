@@ -1,40 +1,45 @@
-# QUIZ / LMS Arvand Backend
+﻿# QUIZ Backend
 
-Backend for the QUIZ / LMS Arvand platform.
+Go backend для LMS/QUIZ платформы.
 
-## Main docs
+## Документы
 
 - [Backend current state](docs/BACKEND_CURRENT_STATE.md)
+- [Frontend API contract](docs/FRONTEND_API.md)
 - [Frontend guide](docs/FRONTEND.md)
-- [Project setup and configuration](docs/PROJECT_SETUP.md)
+- [Project setup](docs/PROJECT_SETUP.md)
+- [Windows test deploy](docs/DEPLOY_WINDOWS_TEST.md)
+- [HTTP test deploy](docs/DEPLOY_HTTP_TEST.md)
 
-## Quick start
+## Быстрый запуск
 
 ```powershell
 go run ./cmd/api
 ```
 
-Build:
+Сборка:
 
 ```powershell
 go build -o bin/api.exe ./cmd/api
 ```
 
-Tests:
+Проверка:
 
 ```powershell
 go test ./...
+go vet ./...
 ```
 
-## Runtime notes
+## Основные runtime notes
 
-- Base API prefix: `/api/v1`
-- Health checks: `/health` and `/api/v1/health`
-- Static uploads are served from `/uploads/*`
-- Google Sign-In config is public at `/api/v1/auth/google/config`; set `GOOGLE_CLIENT_ID` in `.env` to enable it.
-- Login lockout is controlled by `.env`: `AUTH_LOGIN_LOCKOUT_ENABLED`, `AUTH_LOGIN_MAX_ATTEMPTS`, `AUTH_LOGIN_ATTEMPT_WINDOW`, `AUTH_LOGIN_LOCKOUT_SCOPE`.
-- Configuration is loaded from `.env` files with this priority:
-  1. `ENV_FILE` if set
-  2. `.env` in the current working directory
-  3. `.env` next to the compiled exe
-  4. `.env` in the parent directory of the exe
+- API prefix: `/api/v1`
+- Health: `/health` и `/api/v1/health`
+- Uploads: `/uploads/*`
+- Auth: opaque session token через `Authorization: Bearer <token>`
+- Login: email/password или Google ID token
+- Первый admin берётся из `.env`: `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`
+- Только bootstrap user получает `is_super_admin=true`
+- Frontend должен использовать `is_admin`, а не `role`
+- Списки возвращают `data/total/limit/offset`
+- Правильные ответы в quiz response скрыты
+- Сертификат выдаётся по `passing_points`, то есть по реальным баллам теста

@@ -1,81 +1,144 @@
-# HTTP Test Deploy
+﻿# HTTP Test Deploy
 
-Тестовый запуск проекта без HTTPS:
+Тестовый запуск без HTTPS. Цель - один внешний порт для frontend и backend:
 
-- frontend доступен на `http://192.168.10.79:4041`
-- backend слушает `127.0.0.1:9000`
-- nginx разруливает один origin и один порт
+```text
+Browser -> http://192.168.10.79:4041
+             -> Nginx
+                  /api/v1/* -> Go backend 127.0.0.1:9000
+                  /health   -> Go backend 127.0.0.1:9000
+                  /uploads/* -> Go backend 127.0.0.1:9000
+                  /*        -> React build
+```
 
-## 1. Backend
+## Backend
 
-Используй env из [deploy/http-test/backend.env.example](../deploy/http-test/backend.env.example).
-
-Ключевые значения:
-
-- `HTTP_ADDRESS=127.0.0.1:9000`
-- `HTTP_CORS_ALLOWED_ORIGINS=*`
-- `MIGRATE_RUN_ON_START=true`
-- `SEED_RUN_ON_START=true`
-
-Сборка и запуск:
+Сборка:
 
 ```bash
 go build -o bin/api ./cmd/api
+```
+
+Запуск:
+
+```bash
 ./bin/api
 ```
 
-Если backend запускать как systemd service, используй [deploy/http-test/arvand-api.service](../deploy/http-test/arvand-api.service).
+Минимальный `.env`:
 
-## 2. Nginx
+```env
+APP_NAME=QUIZ
+APP_ENV=development
+LOG_LEVEL=INFO
 
-Положи [deploy/http-test/nginx.conf](../deploy/http-test/nginx.conf) в `/etc/nginx/sites-available/arvand`.
+HTTP_ADDRESS=127.0.0.1:9000
+HTTP_CORS_ALLOWED_ORIGINS=http://192.168.10.79:4041
 
-Проверь:
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/lms_arvand?sslmode=disable
 
-```bash
-sudo ln -sf /etc/nginx/sites-available/arvand /etc/nginx/sites-enabled/arvand
-sudo nginx -t
-sudo systemctl reload nginx
+MIGRATE_RUN_ON_START=true
+MIGRATIONS_DIR=migrations
+SEED_RUN_ON_START=true
+
+SEED_ADMIN_EMAIL=admin@local.test
+SEED_ADMIN_PASSWORD=Admin123!
+SEED_ADMIN_FIRST_NAME=System
+SEED_ADMIN_LAST_NAME=Admin
+
+AUTH_LOGIN_LOCKOUT_ENABLED=false
+AUTH_PASSWORD_RESET_RETURN_TOKEN=true
+AUTH_GOOGLE_DEFAULT_ROLE=student
+GOOGLE_CLIENT_ID=
+
+UPLOADS_DIR=uploads
+UPLOAD_MAX_SIZE_MB=20
 ```
 
-Конфиг делает следующее:
+## Frontend
 
-- `/api/v1/*` -> `127.0.0.1:9000`
-- `/health` -> `127.0.0.1:9000`
-- `/` -> React build из `/var/www/arvand`
-
-## 3. Frontend
-
-React build должен обращаться к API через тот же origin:
+Frontend должен обращаться к backend через тот же origin:
 
 ```env
 VITE_API_URL=/api/v1
 ```
 
-Если frontend по какой-то причине не поддерживает относительный base path, используй:
+Сборка:
 
-```env
-VITE_API_URL=http://192.168.10.79:4041/api/v1
+```bash
+npm run build
 ```
 
-После сборки фронта скопируй `dist/*` в `/var/www/arvand`.
-
-## 4. Итоговая схема
+Скопировать `dist/*` в папку nginx, например:
 
 ```text
-Browser
-  -> http://192.168.10.79:4041
-       -> Nginx
-            /api/v1/* -> Go :9000
-            /health   -> Go :9000
-            /*        -> React static files
+/var/www/arvand
 ```
 
-## 5. После теста
+## Nginx
 
-Когда будете готовы к HTTPS:
+Пример:
 
-- добавить TLS certificate в nginx
-- заменить `listen 4041` на `listen 4041 ssl`
-- включить `ssl_certificate`
-- оставить backend без публичного порта наружу
+```nginx
+server {
+    listen 4041;
+    server_name 192.168.10.79;
+
+    root /var/www/arvand;
+    index index.html;
+
+    location /api/v1/ {
+        proxy_pass http://127.0.0.1:9000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /health {
+        proxy_pass http://127.0.0.1:9000;
+    }
+
+    location /uploads/ {
+        proxy_pass http://127.0.0.1:9000;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+Проверка:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+## Проверка
+
+```text
+http://192.168.10.79:4041
+http://192.168.10.79:4041/health
+http://192.168.10.79:4041/api/v1/health
+```
+
+Первый вход:
+
+```text
+admin@local.test
+Admin123!
+```
+
+## После успешного HTTP-теста
+
+Для production:
+
+- добавить HTTPS;
+- поставить `AUTH_LOGIN_LOCKOUT_ENABLED=true`;
+- поставить `AUTH_PASSWORD_RESET_RETURN_TOKEN=false`;
+- сменить пароль seed admin;
+- указать точный `HTTP_CORS_ALLOWED_ORIGINS`;
+- оставить backend только на `127.0.0.1:9000`.

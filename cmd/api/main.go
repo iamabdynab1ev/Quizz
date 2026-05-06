@@ -111,6 +111,7 @@ func run() error {
 	sessionRepository := postgres.NewSessionRepository(dbPool)
 	sessionCache := cache.NewSessionCache(cfg.Auth.SessionCacheTTL)
 	loginAttemptRepository := postgres.NewLoginAttemptRepository(dbPool)
+	passwordResetRepository := postgres.NewPasswordResetRepository(dbPool)
 	googleVerifier := usecase.NewGoogleTokenInfoVerifier(cfg.Google.ClientID)
 	authUseCase := usecase.NewAuthUseCase(
 		userRepository,
@@ -119,10 +120,13 @@ func run() error {
 		cfg.Auth.SessionTTL,
 		cfg.Auth.BcryptCost,
 		loginAttemptRepository,
+		passwordResetRepository,
 		cfg.Auth.LoginLockout.Enabled,
 		cfg.Auth.LoginLockout.MaxAttempts,
 		cfg.Auth.LoginLockout.Window,
 		cfg.Auth.LoginLockout.Scope,
+		cfg.Auth.PasswordResetTokenTTL,
+		cfg.Auth.PasswordResetReturnToken,
 		googleVerifier,
 		cfg.Google.DefaultRole,
 	).WithAudit(auditLogger)

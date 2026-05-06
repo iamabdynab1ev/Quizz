@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -39,17 +40,26 @@ type authLoginAttemptRepository interface {
 	Record(ctx context.Context, identifier string, ipAddress *string, succeeded bool) error
 }
 
+type authPasswordResetRepository interface {
+	Create(ctx context.Context, params domain.CreatePasswordResetTokenParams) (domain.PasswordResetToken, error)
+	GetValidByTokenHash(ctx context.Context, tokenHash string, now time.Time) (domain.PasswordResetToken, error)
+	MarkUsed(ctx context.Context, tokenID string) error
+}
+
 type AuthUseCase struct {
 	users               authUserRepository
 	sessions            authSessionRepository
 	sessionCache        authSessionCache
 	loginAttempts       authLoginAttemptRepository
+	passwordResets      authPasswordResetRepository
 	sessionTTL          time.Duration
 	bcryptCost          int
 	loginLockoutEnabled bool
 	maxLoginAttempts    int
 	loginAttemptWindow  time.Duration
 	loginLockoutScope   string
+	passwordResetTTL    time.Duration
+	passwordResetReturn bool
 	google              googleTokenVerifier
 	googleDefaultRole   domain.UserRole
 	audit               *AuditLogger
@@ -63,10 +73,13 @@ func NewAuthUseCase(
 	sessionTTL time.Duration,
 	bcryptCost int,
 	loginAttempts authLoginAttemptRepository,
+	passwordResets authPasswordResetRepository,
 	loginLockoutEnabled bool,
 	maxLoginAttempts int,
 	loginAttemptWindow time.Duration,
 	loginLockoutScope string,
+	passwordResetTTL time.Duration,
+	passwordResetReturn bool,
 	google googleTokenVerifier,
 	googleDefaultRole string,
 ) *AuthUseCase {
@@ -75,12 +88,15 @@ func NewAuthUseCase(
 		sessions:            sessions,
 		sessionCache:        sessionCache,
 		loginAttempts:       loginAttempts,
+		passwordResets:      passwordResets,
 		sessionTTL:          sessionTTL,
 		bcryptCost:          bcryptCost,
 		loginLockoutEnabled: loginLockoutEnabled,
 		maxLoginAttempts:    maxLoginAttempts,
 		loginAttemptWindow:  loginAttemptWindow,
 		loginLockoutScope:   normalizeLoginLockoutScope(loginLockoutScope),
+		passwordResetTTL:    passwordResetTTL,
+		passwordResetReturn: passwordResetReturn,
 		google:              google,
 		googleDefaultRole:   normalizeGoogleDefaultRole(googleDefaultRole),
 		now:                 time.Now,
@@ -343,6 +359,155 @@ func (u *AuthUseCase) UpdateProfile(ctx context.Context, params domain.UpdatePro
 	return user, nil
 }
 
+func (u *AuthUseCase) ChangePassword(ctx context.Context, params domain.ChangePasswordParams) error {
+	normalized, err := normalizeChangePasswordParams(params)
+	if err != nil {
+		return fmt.Errorf("usecase auth change password: %w", err)
+	}
+
+	current, err := u.users.GetByID(ctx, normalized.UserID)
+	if err != nil {
+		return fmt.Errorf("usecase auth change password get current user: %w", err)
+	}
+
+	if !current.IsActive {
+		return fmt.Errorf("usecase auth change password inactive user: %w", domain.ErrUnauthorized)
+	}
+
+	if current.PasswordHash != nil {
+		if normalized.CurrentPassword == nil {
+			return domain.FieldValidationError("Проверьте поля формы",
+				domain.ValidationField("current_password", "required", "Текущий пароль обязателен"))
+		}
+		if err := comparePasswordHash(*current.PasswordHash, *normalized.CurrentPassword); err != nil {
+			return domain.UnauthorizedError("Текущий пароль указан неверно")
+		}
+	}
+
+	passwordHash, err := hashPassword(normalized.NewPassword, u.bcryptCost)
+	if err != nil {
+		return fmt.Errorf("usecase auth change password hash password: %w", err)
+	}
+
+	update := userToPasswordUpdateParams(current)
+	update.PasswordHash = &passwordHash
+	if _, err := u.users.Update(ctx, update); err != nil {
+		return fmt.Errorf("usecase auth change password save: %w", err)
+	}
+
+	u.deleteCachedIdentity(normalized.SessionToken)
+	if u.audit != nil {
+		u.audit.Log(ctx, domain.AppEventUserUpdated, map[string]any{
+			"user_id": current.ID,
+			"email":   current.Email,
+			"source":  "password_change",
+		})
+	}
+
+	return nil
+}
+
+func (u *AuthUseCase) ForgotPassword(ctx context.Context, params domain.ForgotPasswordParams) (domain.ForgotPasswordResult, error) {
+	normalized, err := normalizeForgotPasswordParams(params)
+	if err != nil {
+		return domain.ForgotPasswordResult{}, fmt.Errorf("usecase auth forgot password: %w", err)
+	}
+
+	if u.passwordResets == nil {
+		return domain.ForgotPasswordResult{}, fmt.Errorf("usecase auth forgot password: %w", domain.UnavailableError("Сброс пароля не настроен"))
+	}
+
+	ttl := u.passwordResetTTL
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+	expiresAt := u.now().UTC().Add(ttl)
+
+	user, err := u.users.GetByEmail(ctx, normalized.Email)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.ForgotPasswordResult{ExpiresAt: &expiresAt}, nil
+		}
+		return domain.ForgotPasswordResult{}, fmt.Errorf("usecase auth forgot password get user: %w", err)
+	}
+
+	if !user.IsActive {
+		return domain.ForgotPasswordResult{ExpiresAt: &expiresAt}, nil
+	}
+
+	token, err := generateSessionToken()
+	if err != nil {
+		return domain.ForgotPasswordResult{}, fmt.Errorf("usecase auth forgot password generate token: %w", err)
+	}
+
+	if _, err := u.passwordResets.Create(ctx, domain.CreatePasswordResetTokenParams{
+		UserID:    user.ID,
+		TokenHash: hashPasswordResetToken(token),
+		ExpiresAt: expiresAt,
+	}); err != nil {
+		return domain.ForgotPasswordResult{}, fmt.Errorf("usecase auth forgot password create token: %w", err)
+	}
+
+	result := domain.ForgotPasswordResult{ExpiresAt: &expiresAt}
+	if u.passwordResetReturn {
+		result.ResetToken = &token
+	}
+
+	return result, nil
+}
+
+func (u *AuthUseCase) ResetPassword(ctx context.Context, params domain.ResetPasswordParams) error {
+	normalized, err := normalizeResetPasswordParams(params)
+	if err != nil {
+		return fmt.Errorf("usecase auth reset password: %w", err)
+	}
+
+	if u.passwordResets == nil {
+		return fmt.Errorf("usecase auth reset password: %w", domain.UnavailableError("Сброс пароля не настроен"))
+	}
+
+	resetToken, err := u.passwordResets.GetValidByTokenHash(ctx, hashPasswordResetToken(normalized.Token), u.now().UTC())
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.UnauthorizedError("Ссылка сброса пароля недействительна или истекла")
+		}
+		return fmt.Errorf("usecase auth reset password get token: %w", err)
+	}
+
+	user, err := u.users.GetByID(ctx, resetToken.UserID)
+	if err != nil {
+		return fmt.Errorf("usecase auth reset password get user: %w", err)
+	}
+	if !user.IsActive {
+		return fmt.Errorf("usecase auth reset password inactive user: %w", domain.ErrUnauthorized)
+	}
+
+	passwordHash, err := hashPassword(normalized.NewPassword, u.bcryptCost)
+	if err != nil {
+		return fmt.Errorf("usecase auth reset password hash password: %w", err)
+	}
+
+	update := userToPasswordUpdateParams(user)
+	update.PasswordHash = &passwordHash
+	if _, err := u.users.Update(ctx, update); err != nil {
+		return fmt.Errorf("usecase auth reset password save: %w", err)
+	}
+
+	if err := u.passwordResets.MarkUsed(ctx, resetToken.ID); err != nil {
+		return fmt.Errorf("usecase auth reset password mark token used: %w", err)
+	}
+
+	if u.audit != nil {
+		u.audit.Log(ctx, domain.AppEventUserUpdated, map[string]any{
+			"user_id": user.ID,
+			"email":   user.Email,
+			"source":  "password_reset",
+		})
+	}
+
+	return nil
+}
+
 func (u *AuthUseCase) resolveGoogleUser(ctx context.Context, identity GoogleIdentity) (domain.User, error) {
 	user, err := u.users.GetByGoogleID(ctx, identity.Subject)
 	if err == nil {
@@ -541,12 +706,10 @@ func normalizeUpdateProfileParams(params domain.UpdateProfileParams) (domain.Upd
 	validation.addRequired("user_id", params.UserID, "ID пользователя")
 
 	if params.Email != nil {
-		if err := validateEmail(params.Email); err != nil {
-			validation.add("email", "invalid_email", "Email указан неверно")
-		}
+		validation.add("email", "forbidden", "Email нельзя менять через профиль")
 	}
-	if params.Password != nil && len(*params.Password) < 8 {
-		validation.add("password", "too_short", "Пароль должен быть минимум 8 символов")
+	if params.Password != nil {
+		validation.add("password", "forbidden", "Для смены пароля используйте /api/v1/auth/password/change")
 	}
 	if params.Gender != "" && !params.Gender.IsValid() {
 		validation.add("gender", "invalid_enum", "Пол должен быть male, female, other или unspecified")
@@ -591,17 +754,64 @@ func normalizeLoginParams(params domain.LoginParams) (domain.LoginParams, error)
 	return params, nil
 }
 
+func normalizeChangePasswordParams(params domain.ChangePasswordParams) (domain.ChangePasswordParams, error) {
+	params.UserID = strings.TrimSpace(params.UserID)
+	params.SessionToken = strings.TrimSpace(params.SessionToken)
+	params.CurrentPassword = normalizeOptionalString(params.CurrentPassword)
+	params.NewPassword = strings.TrimSpace(params.NewPassword)
+
+	var validation fieldValidationBuilder
+	validation.addRequired("user_id", params.UserID, "ID пользователя")
+	validation.addRequired("new_password", params.NewPassword, "Новый пароль")
+	if params.NewPassword != "" && len(params.NewPassword) < 8 {
+		validation.add("new_password", "too_short", "Новый пароль должен быть минимум 8 символов")
+	}
+
+	if err := validation.err(); err != nil {
+		return domain.ChangePasswordParams{}, err
+	}
+
+	return params, nil
+}
+
+func normalizeForgotPasswordParams(params domain.ForgotPasswordParams) (domain.ForgotPasswordParams, error) {
+	params.Email = strings.TrimSpace(strings.ToLower(params.Email))
+
+	var validation fieldValidationBuilder
+	validation.addRequired("email", params.Email, "Email")
+	if params.Email != "" {
+		email := params.Email
+		if err := validateEmail(&email); err != nil {
+			validation.add("email", "invalid_email", "Email указан неверно")
+		}
+	}
+
+	if err := validation.err(); err != nil {
+		return domain.ForgotPasswordParams{}, err
+	}
+
+	return params, nil
+}
+
+func normalizeResetPasswordParams(params domain.ResetPasswordParams) (domain.ResetPasswordParams, error) {
+	params.Token = strings.TrimSpace(params.Token)
+	params.NewPassword = strings.TrimSpace(params.NewPassword)
+
+	var validation fieldValidationBuilder
+	validation.addRequired("token", params.Token, "Токен сброса")
+	validation.addRequired("new_password", params.NewPassword, "Новый пароль")
+	if params.NewPassword != "" && len(params.NewPassword) < 8 {
+		validation.add("new_password", "too_short", "Новый пароль должен быть минимум 8 символов")
+	}
+
+	if err := validation.err(); err != nil {
+		return domain.ResetPasswordParams{}, err
+	}
+
+	return params, nil
+}
+
 func profileUpdateToUserParams(current domain.User, params domain.UpdateProfileParams) domain.UpdateUserParams {
-	email := current.Email
-	if params.Email != nil {
-		email = params.Email
-	}
-
-	gender := current.Gender
-	if params.Gender != "" {
-		gender = params.Gender
-	}
-
 	studentInfo := current.StudentInfo
 	if current.Role == domain.UserRoleStudent {
 		if studentInfo == nil {
@@ -616,23 +826,45 @@ func profileUpdateToUserParams(current domain.User, params domain.UpdateProfileP
 
 	return domain.UpdateUserParams{
 		ID:           current.ID,
-		Email:        email,
+		Email:        current.Email,
 		GoogleID:     current.GoogleID,
-		Password:     params.Password,
+		Password:     nil,
 		Role:         current.Role,
 		FirstName:    keepExistingString(params.FirstName, current.FirstName),
 		LastName:     keepExistingString(params.LastName, current.LastName),
-		Patronymic:   params.Patronymic,
+		Patronymic:   current.Patronymic,
 		Phone:        keepExistingOptionalString(params.Phone, current.Phone),
-		Gender:       gender,
+		Gender:       current.Gender,
 		BirthDate:    keepExistingOptionalString(params.BirthDate, current.BirthDate),
-		Address:      keepExistingOptionalString(params.Address, current.Address),
-		City:         keepExistingOptionalString(params.City, current.City),
-		AvatarURL:    keepExistingOptionalString(params.AvatarURL, current.AvatarURL),
+		Address:      current.Address,
+		City:         current.City,
+		AvatarURL:    current.AvatarURL,
 		IsActive:     current.IsActive,
 		EmployeeInfo: current.EmployeeInfo,
 		StudentInfo:  studentInfo,
 		GuestInfo:    current.GuestInfo,
+	}
+}
+
+func userToPasswordUpdateParams(user domain.User) domain.UpdateUserParams {
+	return domain.UpdateUserParams{
+		ID:           user.ID,
+		Email:        user.Email,
+		GoogleID:     user.GoogleID,
+		Role:         user.Role,
+		FirstName:    user.FirstName,
+		LastName:     user.LastName,
+		Patronymic:   user.Patronymic,
+		Phone:        user.Phone,
+		Gender:       user.Gender,
+		BirthDate:    user.BirthDate,
+		Address:      user.Address,
+		City:         user.City,
+		AvatarURL:    user.AvatarURL,
+		IsActive:     user.IsActive,
+		EmployeeInfo: user.EmployeeInfo,
+		StudentInfo:  user.StudentInfo,
+		GuestInfo:    user.GuestInfo,
 	}
 }
 
@@ -676,6 +908,11 @@ func generateSessionToken() (string, error) {
 	}
 
 	return hex.EncodeToString(buffer), nil
+}
+
+func hashPasswordResetToken(token string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return hex.EncodeToString(sum[:])
 }
 
 func (u *AuthUseCase) ensureLoginAllowed(ctx context.Context, identifier string, ipAddress *string) error {

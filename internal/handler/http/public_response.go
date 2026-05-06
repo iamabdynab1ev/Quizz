@@ -23,18 +23,20 @@ type courseResponse struct {
 }
 
 type quizResponse struct {
-	ID               string               `json:"id"`
-	Title            domain.MultiLangText `json:"title"`
-	Description      domain.MultiLangText `json:"description"`
-	CourseID         *string              `json:"course_id,omitempty"`
-	Category         *string              `json:"category,omitempty"`
-	TimeLimitMinutes *int                 `json:"time_limit_minutes,omitempty"`
-	PassingScore     int                  `json:"passing_score"`
-	MaxAttempts      int                  `json:"max_attempts"`
-	AllowRetry       bool                 `json:"allow_retry"`
-	Questions        []questionResponse   `json:"questions,omitempty"`
-	CreatedAt        time.Time            `json:"created_at"`
-	UpdatedAt        time.Time            `json:"updated_at"`
+	ID                 string               `json:"id"`
+	Title              domain.MultiLangText `json:"title"`
+	Description        domain.MultiLangText `json:"description"`
+	CourseID           *string              `json:"course_id,omitempty"`
+	Category           *string              `json:"category,omitempty"`
+	TimeLimitMinutes   *int                 `json:"time_limit_minutes,omitempty"`
+	PassingScore       int                  `json:"passing_score"`
+	PassingPoints      float64              `json:"passing_points"`
+	MaxAttempts        int                  `json:"max_attempts"`
+	RetakeCooldownDays int                  `json:"retake_cooldown_days"`
+	AllowRetry         bool                 `json:"allow_retry"`
+	Questions          []questionResponse   `json:"questions,omitempty"`
+	CreatedAt          time.Time            `json:"created_at"`
+	UpdatedAt          time.Time            `json:"updated_at"`
 }
 
 type questionResponse struct {
@@ -90,18 +92,20 @@ func toCourseResponses(courses []domain.Course) []courseResponse {
 
 func toQuizResponse(quiz domain.Quiz) quizResponse {
 	return quizResponse{
-		ID:               quiz.ID,
-		Title:            quiz.Title,
-		Description:      quiz.Description,
-		CourseID:         quiz.CourseID,
-		Category:         quiz.Category,
-		TimeLimitMinutes: quiz.TimeLimitMinutes,
-		PassingScore:     quiz.PassingScore,
-		MaxAttempts:      quiz.MaxAttempts,
-		AllowRetry:       quiz.AllowRetry,
-		Questions:        toQuestionResponses(quiz.Questions),
-		CreatedAt:        quiz.CreatedAt,
-		UpdatedAt:        quiz.UpdatedAt,
+		ID:                 quiz.ID,
+		Title:              quiz.Title,
+		Description:        quiz.Description,
+		CourseID:           quiz.CourseID,
+		Category:           quiz.Category,
+		TimeLimitMinutes:   quiz.TimeLimitMinutes,
+		PassingScore:       quiz.PassingScore,
+		PassingPoints:      quiz.PassingPoints,
+		MaxAttempts:        quiz.MaxAttempts,
+		RetakeCooldownDays: quiz.RetakeCooldownDays,
+		AllowRetry:         quiz.AllowRetry,
+		Questions:          toQuestionResponses(quiz.Questions),
+		CreatedAt:          quiz.CreatedAt,
+		UpdatedAt:          quiz.UpdatedAt,
 	}
 }
 
@@ -206,19 +210,32 @@ func removeAnswerKeys(value any) {
 func isAnswerKey(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
 	case "is_correct",
+		"iscorrect",
 		"correct",
 		"accepted_answer",
 		"accepted_answers",
+		"acceptedanswer",
+		"acceptedanswers",
 		"correct_answer",
 		"correct_answers",
+		"correctanswer",
+		"correctanswers",
 		"correct_id",
 		"correct_ids",
+		"correctid",
+		"correctids",
 		"correct_option_id",
 		"correct_option_ids",
+		"correctoptionid",
+		"correctoptionids",
 		"answer_key",
 		"answer_keys",
+		"answerkey",
+		"answerkeys",
 		"expected_answer",
-		"expected_answers":
+		"expected_answers",
+		"expectedanswer",
+		"expectedanswers":
 		return true
 	default:
 		return false

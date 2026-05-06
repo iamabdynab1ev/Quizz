@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,8 +25,12 @@ func (r *attemptReviewRepoStub) GetQuizForAttempt(ctx context.Context, quizID st
 	return r.quiz, r.getQuizErr
 }
 
-func (r *attemptReviewRepoStub) CountUserQuizAttempts(ctx context.Context, quizID, userID string) (int, error) {
-	panic("unexpected CountUserQuizAttempts call")
+func (r *attemptReviewRepoStub) GetUserQuizAttemptWindow(ctx context.Context, quizID, userID string, since *time.Time) (domain.AttemptWindow, error) {
+	panic("unexpected GetUserQuizAttemptWindow call")
+}
+
+func (r *attemptReviewRepoStub) UserHasCourseCertificate(ctx context.Context, courseID, userID string) (bool, error) {
+	panic("unexpected UserHasCourseCertificate call")
 }
 
 func (r *attemptReviewRepoStub) CreateAttempt(ctx context.Context, params domain.CreateAttemptRecordParams) (domain.Attempt, error) {
@@ -69,12 +74,15 @@ func (r *attemptReviewRepoStub) UpdateReview(ctx context.Context, params domain.
 }
 
 type attemptSubmitRepoStub struct {
-	quiz          domain.Quiz
-	attempt       domain.Attempt
-	getQuizErr    error
-	countErr      error
-	createErr     error
-	getAttemptErr error
+	quiz           domain.Quiz
+	attempt        domain.Attempt
+	attemptWindow  domain.AttemptWindow
+	hasCertificate bool
+	getQuizErr     error
+	windowErr      error
+	certificateErr error
+	createErr      error
+	getAttemptErr  error
 
 	createCalled bool
 	createParams domain.CreateAttemptRecordParams
@@ -84,12 +92,20 @@ func (r *attemptSubmitRepoStub) GetQuizForAttempt(ctx context.Context, quizID st
 	return r.quiz, r.getQuizErr
 }
 
-func (r *attemptSubmitRepoStub) CountUserQuizAttempts(ctx context.Context, quizID, userID string) (int, error) {
-	if r.countErr != nil {
-		return 0, r.countErr
+func (r *attemptSubmitRepoStub) GetUserQuizAttemptWindow(ctx context.Context, quizID, userID string, since *time.Time) (domain.AttemptWindow, error) {
+	if r.windowErr != nil {
+		return domain.AttemptWindow{}, r.windowErr
 	}
 
-	return 0, nil
+	return r.attemptWindow, nil
+}
+
+func (r *attemptSubmitRepoStub) UserHasCourseCertificate(ctx context.Context, courseID, userID string) (bool, error) {
+	if r.certificateErr != nil {
+		return false, r.certificateErr
+	}
+
+	return r.hasCertificate, nil
 }
 
 func (r *attemptSubmitRepoStub) CreateAttempt(ctx context.Context, params domain.CreateAttemptRecordParams) (domain.Attempt, error) {
@@ -446,6 +462,136 @@ func TestAttemptUseCaseSubmitAutoIssuesCertificate(t *testing.T) {
 	}
 	if !result.Passed {
 		t.Fatalf("expected passed attempt")
+	}
+}
+
+func TestAttemptUseCaseSubmitDoesNotPassBelowPassingPoints(t *testing.T) {
+	quiz := domain.Quiz{
+		ID:            "quiz-submit-2",
+		CourseID:      ptr("course-2"),
+		PassingPoints: 8,
+		MaxAttempts:   3,
+		Questions: []domain.Question{
+			{
+				ID:       "q1",
+				Type:     domain.QuestionTypeSingleChoice,
+				Points:   10,
+				Required: true,
+				Config: mustJSON(t, map[string]any{
+					"options": []map[string]any{
+						{"id": "a", "is_correct": true},
+						{"id": "b", "is_correct": false},
+					},
+				}),
+			},
+		},
+	}
+
+	repo := &attemptSubmitRepoStub{quiz: quiz}
+	autoIssuer := &attemptAutoIssuerStub{}
+	uc := NewAttemptUseCase(repo).WithCertificateAutoIssuer(autoIssuer)
+
+	result, err := uc.Submit(context.Background(), domain.SubmitAttemptParams{
+		QuizID: quiz.ID,
+		UserID: "user-2",
+		Answers: []domain.AttemptAnswer{
+			{
+				QuestionID:        "q1",
+				SelectedOptionIDs: []string{"b"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("submit returned error: %v", err)
+	}
+	if result.Passed {
+		t.Fatalf("expected attempt below passing points to fail")
+	}
+	if autoIssuer.called {
+		t.Fatalf("auto issuer must not run for failed attempt")
+	}
+}
+
+func TestAttemptUseCaseSubmitBlocksWhenCertificateAlreadyIssued(t *testing.T) {
+	quiz := domain.Quiz{
+		ID:          "quiz-submit-3",
+		CourseID:    ptr("course-3"),
+		MaxAttempts: 3,
+		Questions: []domain.Question{{
+			ID:     "q1",
+			Type:   domain.QuestionTypeSingleChoice,
+			Points: 1,
+			Config: mustJSON(t, map[string]any{
+				"options": []map[string]any{
+					{"id": "a", "is_correct": true},
+				},
+			}),
+		}},
+	}
+
+	repo := &attemptSubmitRepoStub{quiz: quiz, hasCertificate: true}
+	uc := NewAttemptUseCase(repo)
+
+	_, err := uc.Submit(context.Background(), domain.SubmitAttemptParams{
+		QuizID: quiz.ID,
+		UserID: "user-3",
+		Answers: []domain.AttemptAnswer{
+			{QuestionID: "q1", SelectedOptionIDs: []string{"a"}},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected submit to be blocked after certificate")
+	}
+	if !strings.Contains(err.Error(), "Сертификат") {
+		t.Fatalf("expected certificate error, got %v", err)
+	}
+	if repo.createCalled {
+		t.Fatalf("attempt must not be created after certificate")
+	}
+}
+
+func TestAttemptUseCaseSubmitBlocksAttemptsUntilCooldownExpires(t *testing.T) {
+	quiz := domain.Quiz{
+		ID:                 "quiz-submit-4",
+		MaxAttempts:        3,
+		RetakeCooldownDays: 30,
+		Questions: []domain.Question{{
+			ID:     "q1",
+			Type:   domain.QuestionTypeSingleChoice,
+			Points: 1,
+			Config: mustJSON(t, map[string]any{
+				"options": []map[string]any{
+					{"id": "a", "is_correct": true},
+				},
+			}),
+		}},
+	}
+
+	repo := &attemptSubmitRepoStub{
+		quiz: quiz,
+		attemptWindow: domain.AttemptWindow{
+			Count:             3,
+			EarliestStartedAt: ptrTime(time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)),
+		},
+	}
+	uc := NewAttemptUseCase(repo)
+	uc.now = func() time.Time { return time.Date(2026, 5, 10, 10, 0, 0, 0, time.UTC) }
+
+	_, err := uc.Submit(context.Background(), domain.SubmitAttemptParams{
+		QuizID: quiz.ID,
+		UserID: "user-4",
+		Answers: []domain.AttemptAnswer{
+			{QuestionID: "q1", SelectedOptionIDs: []string{"a"}},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected submit to be blocked by cooldown")
+	}
+	if !strings.Contains(err.Error(), "31.05.2026") {
+		t.Fatalf("expected cooldown date in error, got %v", err)
+	}
+	if repo.createCalled {
+		t.Fatalf("attempt must not be created while cooldown is active")
 	}
 }
 

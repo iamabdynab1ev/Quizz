@@ -6,6 +6,7 @@ import (
 	"net"
 	nethttp "net/http"
 	"strings"
+	"time"
 
 	"lms-arvand-backend/internal/domain"
 	"lms-arvand-backend/internal/handler/http/middleware"
@@ -17,6 +18,9 @@ type authUseCase interface {
 	LoginWithGoogle(ctx context.Context, params domain.GoogleLoginParams) (domain.LoginResult, error)
 	Authenticate(ctx context.Context, token string) (domain.AuthIdentity, error)
 	UpdateProfile(ctx context.Context, params domain.UpdateProfileParams) (domain.User, error)
+	ChangePassword(ctx context.Context, params domain.ChangePasswordParams) error
+	ForgotPassword(ctx context.Context, params domain.ForgotPasswordParams) (domain.ForgotPasswordResult, error)
+	ResetPassword(ctx context.Context, params domain.ResetPasswordParams) error
 	Logout(ctx context.Context, token string) error
 }
 
@@ -127,6 +131,57 @@ func (h *AuthHandler) LoginWithGoogle(w nethttp.ResponseWriter, r *nethttp.Reque
 	}
 }
 
+func (h *AuthHandler) ForgotPassword(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var request domain.ForgotPasswordParams
+	if err := decodeJSON(w, r, &request, 1<<20); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+
+	result, err := h.useCase.ForgotPassword(r.Context(), request)
+	if err != nil {
+		status := writeMappedError(w, err)
+		if status >= nethttp.StatusInternalServerError {
+			h.logger.ErrorContext(r.Context(), "сброс пароля не подготовлен", slog.String("error", err.Error()))
+		}
+		return
+	}
+
+	response := struct {
+		Message    string     `json:"message"`
+		ResetToken *string    `json:"reset_token,omitempty"`
+		ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	}{
+		Message:    "Если пользователь с таким email существует, инструкция по сбросу пароля подготовлена",
+		ResetToken: result.ResetToken,
+		ExpiresAt:  result.ExpiresAt,
+	}
+
+	if err := writeJSON(w, nethttp.StatusOK, response); err != nil {
+		h.logger.ErrorContext(r.Context(), "ответ сброса пароля не отправлен", slog.String("error", err.Error()))
+	}
+}
+
+func (h *AuthHandler) ResetPassword(w nethttp.ResponseWriter, r *nethttp.Request) {
+	var request domain.ResetPasswordParams
+	if err := decodeJSON(w, r, &request, 1<<20); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+
+	if err := h.useCase.ResetPassword(r.Context(), request); err != nil {
+		status := writeMappedError(w, err)
+		if status >= nethttp.StatusInternalServerError || status == nethttp.StatusUnauthorized {
+			h.logger.ErrorContext(r.Context(), "пароль не сброшен", slog.String("error", err.Error()))
+		}
+		return
+	}
+
+	if err := writeJSON(w, nethttp.StatusOK, map[string]string{"message": "Пароль изменён"}); err != nil {
+		h.logger.ErrorContext(r.Context(), "ответ сброса пароля не отправлен", slog.String("error", err.Error()))
+	}
+}
+
 func (h *AuthHandler) GoogleConfig(w nethttp.ResponseWriter, r *nethttp.Request) {
 	response := struct {
 		Enabled  bool   `json:"enabled"`
@@ -188,6 +243,42 @@ func (h *AuthHandler) UpdateMe(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 	if err := writeJSON(w, nethttp.StatusOK, toUserResponse(user)); err != nil {
 		h.logger.ErrorContext(r.Context(), "ответ профиля пользователя не отправлен", slog.String("error", err.Error()))
+	}
+}
+
+func (h *AuthHandler) ChangePassword(w nethttp.ResponseWriter, r *nethttp.Request) {
+	identity, ok := middleware.CurrentAuthIdentity(r.Context())
+	if !ok {
+		writeError(w, nethttp.StatusUnauthorized, "unauthorized", "Требуется авторизация")
+		return
+	}
+
+	sessionToken, _ := middleware.CurrentSessionToken(r.Context())
+
+	var request struct {
+		CurrentPassword *string `json:"current_password,omitempty"`
+		NewPassword     string  `json:"new_password"`
+	}
+	if err := decodeJSON(w, r, &request, 1<<20); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+
+	if err := h.useCase.ChangePassword(r.Context(), domain.ChangePasswordParams{
+		UserID:          identity.User.ID,
+		SessionToken:    sessionToken,
+		CurrentPassword: request.CurrentPassword,
+		NewPassword:     request.NewPassword,
+	}); err != nil {
+		status := writeMappedError(w, err)
+		if status >= nethttp.StatusInternalServerError || status == nethttp.StatusUnauthorized {
+			h.logger.ErrorContext(r.Context(), "пароль не изменён", slog.String("error", err.Error()))
+		}
+		return
+	}
+
+	if err := writeJSON(w, nethttp.StatusOK, map[string]string{"message": "Пароль изменён"}); err != nil {
+		h.logger.ErrorContext(r.Context(), "ответ смены пароля не отправлен", slog.String("error", err.Error()))
 	}
 }
 

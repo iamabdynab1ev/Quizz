@@ -41,6 +41,11 @@ type CreateAttemptRecordParams struct {
 	NeedsReview       bool
 }
 
+type AttemptWindow struct {
+	Count             int
+	EarliestStartedAt *time.Time
+}
+
 type Attempt struct {
 	ID                string               `json:"id"`
 	QuizID            string               `json:"quiz_id"`

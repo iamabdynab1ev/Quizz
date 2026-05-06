@@ -41,6 +41,9 @@ func TestAdminSeederSeedCreatesMissingAdmin(t *testing.T) {
 				if params.Role != domain.UserRoleAdmin {
 					t.Fatalf("Create() role = %q, want %q", params.Role, domain.UserRoleAdmin)
 				}
+				if !params.IsSuperAdmin {
+					t.Fatal("Create() is_super_admin = false, want true")
+				}
 
 				if params.Email == nil || *params.Email != "admin@local.test" {
 					t.Fatalf("Create() email = %#v, want admin@local.test", params.Email)
@@ -95,6 +98,9 @@ func TestAdminSeederSeedUpdatesExistingAdmin(t *testing.T) {
 
 				if params.Role != domain.UserRoleAdmin {
 					t.Fatalf("Update() role = %q, want %q", params.Role, domain.UserRoleAdmin)
+				}
+				if params.IsSuperAdmin == nil || !*params.IsSuperAdmin {
+					t.Fatal("Update() is_super_admin is not true")
 				}
 
 				if params.Email == nil || *params.Email != "admin@local.test" {

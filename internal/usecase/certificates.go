@@ -64,12 +64,8 @@ func (u *CertificateUseCase) Create(ctx context.Context, params domain.CreateCer
 		return domain.Certificate{}, fmt.Errorf("course certificate is disabled: %w", domain.ErrConflict)
 	}
 
-	if issuanceContext.CertificatePassingScore > 0 {
-		if issuanceContext.AttemptScorePercent < float64(issuanceContext.CertificatePassingScore) {
-			return domain.Certificate{}, fmt.Errorf("attempt score is below certificate passing score: %w", domain.ErrValidation)
-		}
-	} else if !issuanceContext.AttemptPassed {
-		return domain.Certificate{}, fmt.Errorf("attempt is not passed: %w", domain.ErrValidation)
+	if !issuanceContext.AttemptPassed {
+		return domain.Certificate{}, domain.ValidationError("Сертификат выдаётся только после успешной сдачи теста")
 	}
 
 	if issuanceContext.EnrollmentUserID != issuanceContext.AttemptUserID {
@@ -186,10 +182,6 @@ func (u *CertificateUseCase) TryAutoIssueForEnrollment(ctx context.Context, enro
 	}
 
 	if !candidate.CertificateEnabled {
-		return nil, nil
-	}
-
-	if candidate.CertificatePassingScore > 0 && candidate.AttemptScorePercent < float64(candidate.CertificatePassingScore) {
 		return nil, nil
 	}
 

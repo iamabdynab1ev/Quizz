@@ -57,6 +57,8 @@ func NewRouter(
 				auth.Post("/login", authHandler.Login)
 				auth.Get("/google/config", authHandler.GoogleConfig)
 				auth.Post("/google", authHandler.LoginWithGoogle)
+				auth.Post("/password/forgot", authHandler.ForgotPassword)
+				auth.Post("/password/reset", authHandler.ResetPassword)
 			})
 		}
 
@@ -74,6 +76,7 @@ func NewRouter(
 			if authHandler != nil {
 				protected.Get("/auth/me", authHandler.Me)
 				protected.Put("/auth/me", authHandler.UpdateMe)
+				protected.Post("/auth/password/change", authHandler.ChangePassword)
 				protected.Post("/auth/logout", authHandler.Logout)
 			}
 
@@ -179,7 +182,7 @@ func NewRouter(
 				admin.Use(middleware.RequireRoles(domain.UserRoleAdmin))
 
 				if usersHandler != nil {
-					admin.Route("/users", func(users chi.Router) {
+					admin.With(middleware.RequireSuperAdmin()).Route("/users", func(users chi.Router) {
 						users.Get("/", usersHandler.ListUsers)
 						users.Post("/", usersHandler.CreateUser)
 						users.Get("/{userID}", usersHandler.GetUserByID)

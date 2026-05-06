@@ -14,6 +14,12 @@ type errorResponse struct {
 	Fields  []domain.FieldError `json:"fields,omitempty"`
 }
 
+type singleFieldErrorResponse struct {
+	Field   string `json:"field"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 type PagedResponse[T any] struct {
 	Data   []T `json:"data"`
 	Total  int `json:"total"`
@@ -58,6 +64,18 @@ func writeError(w nethttp.ResponseWriter, statusCode int, errorCode, message str
 func writeAppError(w nethttp.ResponseWriter, appErr *domain.AppError) {
 	if appErr == nil {
 		writeError(w, nethttp.StatusInternalServerError, "internal_error", "Внутренняя ошибка сервера")
+		return
+	}
+
+	if len(appErr.Fields) == 1 {
+		field := appErr.Fields[0]
+		if err := writeJSON(w, appErr.Status, singleFieldErrorResponse{
+			Field:   field.Field,
+			Code:    field.Code,
+			Message: field.Message,
+		}); err != nil {
+			nethttp.Error(w, nethttp.StatusText(appErr.Status), appErr.Status)
+		}
 		return
 	}
 

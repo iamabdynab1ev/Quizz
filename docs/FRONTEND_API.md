@@ -1,610 +1,161 @@
-# LMS Arvand Frontend API
+﻿# QUIZ Frontend API Contract
 
-Документ описывает текущий HTTP API проекта `lms-arvand-backend` по состоянию исходного кода. Это не желаемая архитектура, а фактическое поведение backend.
+Документ для frontend-разработчика. Описывает текущий API backend `QUIZ`, какие поля отправлять, какие поля получать и какие бизнес-правила учитывать.
 
-Для тестового запуска фронта и backend см. [DEPLOY_WINDOWS_TEST.md](DEPLOY_WINDOWS_TEST.md).
+## Base URL
 
-## 1. Базовые данные
+Локально без nginx:
 
-- Base URL: `http://localhost:9000/api/v1`
-- Health URL: `http://localhost:9000/health`
-- Public verify URL: `http://localhost:9000/api/v1/certificates/verify/{verifyHash}`
-- Dev admin login:
-  - `email`: `admin@local.test`
-  - `password`: `Admin123!`
+```text
+http://localhost:9000/api/v1
+```
 
-## 2. Общие правила API
+Через Vite proxy или nginx на одном origin:
 
-### 2.1 Авторизация
+```text
+/api/v1
+```
 
-Backend использует не JWT, а opaque session token.
+Health:
 
-Во все защищенные endpoint-ы frontend должен отправлять:
+```text
+GET /health
+GET /api/v1/health
+```
+
+Uploads:
+
+```text
+GET /uploads/{file}
+```
+
+## Авторизация
+
+Backend использует session token, не JWT.
+
+После login frontend сохраняет `token` и отправляет его во всех protected запросах:
 
 ```http
 Authorization: Bearer <token>
 ```
 
-Для браузерного frontend backend теперь отдает CORS headers. Разрешенные origins управляются через `HTTP_CORS_ALLOWED_ORIGINS`.
-
-### 2.2 Формат времени
-
-Все даты и время возвращаются в ISO-8601 / RFC3339 строках.
-
-### 2.3 ID
-
-Все идентификаторы сущностей это UUID-строки.
-
-Пример:
+Первый admin для входа берётся из `.env`:
 
 ```text
-b045dd03-214c-446e-964e-2e9aed06b1b4
+SEED_ADMIN_EMAIL=admin@local.test
+SEED_ADMIN_PASSWORD=Admin123!
 ```
 
-### 2.4 MultiLangText
+## Формат пользователя
 
-Bilingual-поля передаются как JSON-объект:
+Backend наружу отдаёт упрощённый user:
 
 ```json
 {
-  "ru": "Русский текст",
-  "tj": "Матни тоҷикӣ"
+  "id": "uuid",
+  "email": "admin@local.test",
+  "is_admin": true,
+  "is_super_admin": true,
+  "first_name": "System",
+  "last_name": "Admin",
+  "phone": "999999999",
+  "is_male": false,
+  "city": "Худжанд",
+  "birth_date": "2001-07-12",
+  "created_at": "2026-05-06T14:08:12Z",
+  "updated_at": "2026-05-06T14:08:12Z"
 }
 ```
 
-Для большинства create/update сценариев backend ожидает обе локали: `ru` и `tj`.
+Важно:
 
-### 2.5 Текущий формат list-ответов
+- `username` не использовать, его нет в response.
+- `role` не использовать на frontend, вместо него `is_admin`.
+- `is_super_admin` приходит только когда true.
+- `birth_date` приходит только если заполнен.
+- `is_active` не приходит.
+- `is_male=true` значит мужчина, `false` значит женщина/не мужчина.
 
-Сейчас list endpoint-ы возвращают envelope вида `data/total/limit/offset`.
+## Ошибки
 
-Пример:
+Одна ошибка поля:
 
 ```json
 {
-  "data": [
+  "field": "passing_points",
+  "code": "too_high",
+  "message": "Баллы для прохождения не могут быть больше максимального балла теста (10.00)"
+}
+```
+
+Несколько ошибок формы:
+
+```json
+{
+  "error": "validation_error",
+  "message": "Проверьте поля формы",
+  "fields": [
     {
-      "id": "..."
+      "field": "title.ru",
+      "code": "required",
+      "message": "Название обязательно"
     }
-  ],
-  "total": 1,
+  ]
+}
+```
+
+Общая ошибка:
+
+```json
+{
+  "error": "conflict",
+  "message": "Лимит попыток исчерпан. Повторная сдача будет доступна после 05.06.2026."
+}
+```
+
+Frontend должен показывать пользователю `message`. Если есть `field`, подсветить конкретный input. Если есть `fields`, подсветить все поля из массива.
+
+## List responses
+
+Большинство list endpoint-ов возвращает envelope:
+
+```json
+{
+  "data": [],
+  "total": 0,
   "limit": 20,
   "offset": 0
 }
 ```
 
-Для `course-modules`, `content-blocks` и `course-tests` пагинация остаётся упрощенной по контракту самого endpoint-а, но ответ всё равно завернут в envelope.
+Frontend должен читать список из `data`, а не ожидать массив напрямую.
 
-### 2.6 Пагинация
+## Auth endpoints
 
-Для большинства list endpoint-ов поддерживаются query-параметры:
+### POST `/auth/register`
 
-- `limit`
-- `offset`
+Public self-signup.
 
-Текущее поведение в usecase-ах:
-
-- если `limit <= 0`, backend подставляет `20`
-- максимум `limit` обычно `100`
-- `offset < 0` считается ошибкой валидации
-
-Есть исключения:
-
-- `course-modules`
-- `content-blocks`
-- `course-tests`
-
-Эти endpoint-ы не используют стандартный `limit/offset` list-flow.
-
-### 2.7 Ошибки
-
-Единый формат ошибки:
+Body:
 
 ```json
 {
-  "error": "validation_error",
-  "message": "request validation failed"
+  "email": "student@local.test",
+  "password": "Student123!",
+  "first_name": "Ali",
+  "last_name": "Karimov",
+  "phone": "900000000",
+  "is_male": true,
+  "city": "Худжанд",
+  "birth_date": "2001-07-12"
 }
 ```
 
-Основные error codes:
+Response: как login.
 
-- `validation_error`
-- `unauthorized`
-- `forbidden`
-- `not_found`
-- `conflict`
-- `internal_error`
-- `service_unavailable`
+### POST `/auth/login`
 
-Важно:
-
-- многие бизнес-ошибки мапятся в общие сообщения вроде `resource conflict` или `request validation failed`
-- часть endpoint-ов возвращает более точный `message`, если ошибка оформлена как `AppError`
-
-### 2.8 JSON-правила
-
-Backend включает `DisallowUnknownFields()`. Это значит:
-
-- лишние неизвестные поля в JSON body считаются ошибкой
-- body должен быть одним JSON-объектом, без нескольких JSON подряд
-
-## 3. Матрица доступа
-
-### Public
-
-- `GET /health`
-- `GET /api/v1/health`
-- `POST /api/v1/auth/login`
-- `POST /api/v1/auth/google`
-- `GET /api/v1/certificates/verify/{verifyHash}`
-
-### Любой авторизованный пользователь
-
-- `GET /auth/me`
-- `POST /auth/logout`
-- `GET /courses`
-- `GET /courses/{courseID}`
-- `GET /quizzes`
-- `GET /quizzes/{quizID}`
-- `POST /quizzes/{quizID}/attempts`
-- `GET /attempts`
-- `GET /attempts/{attemptID}`
-- `GET /enrollments`
-- `POST /enrollments`
-- `GET /enrollments/{enrollmentID}`
-- `GET /certificates`
-- `GET /certificates/{certificateID}`
-- `GET /course-modules`
-- `GET /course-modules/{moduleID}`
-- `GET /content-blocks`
-- `GET /content-blocks/{blockID}`
-- `GET /reviews`
-- `POST /reviews`
-- `GET /reviews/{reviewID}`
-- `GET /notifications`
-- `GET /notifications/{notificationID}`
-- `POST /notifications/{notificationID}/read`
-
-### Только admin
-
-- все `/users`
-- `POST /courses`
-- `PUT /courses/{courseID}`
-- `DELETE /courses/{courseID}`
-- `POST /quizzes`
-- `PUT /quizzes/{quizID}`
-- `DELETE /quizzes/{quizID}`
-- `POST /enrollments/{enrollmentID}/complete`
-- `POST /certificates`
-- `POST /course-modules`
-- `PUT /course-modules/{moduleID}`
-- `DELETE /course-modules/{moduleID}`
-- `POST /content-blocks`
-- `PUT /content-blocks/{blockID}`
-- `DELETE /content-blocks/{blockID}`
-- `GET /course-tests`
-- `POST /course-tests`
-- `DELETE /course-tests`
-- `POST /reviews/{reviewID}/moderate`
-- `POST /notifications`
-- все `/webhooks`
-- все `/audit-logs`
-
-### User-scoped endpoint-ы
-
-Для non-admin backend сам ограничивает доступ к своим данным. Это касается:
-
-- `attempts`
-- `enrollments`
-- `certificates`
-- `notifications`
-
-Следствия для frontend:
-
-- обычный пользователь не может читать чужие записи даже если подставит чужой `user_id`
-- admin может читать и фильтровать по любому `user_id`
-
-## 4. Основные схемы объектов
-
-### 4.1 User
-
-```json
-{
-  "id": "uuid",
-  "username": "admin",
-  "email": "admin@local.test",
-  "google_id": "optional-google-subject",
-  "role": "admin",
-  "first_name": "System",
-  "last_name": "Admin",
-  "patronymic": "",
-  "phone": "+992...",
-  "gender": "unspecified",
-  "address": "optional",
-  "city": "optional",
-  "avatar_url": "optional",
-  "is_active": true,
-  "created_at": "2026-04-24T09:18:48Z",
-  "updated_at": "2026-04-24T09:34:14Z",
-  "employee_info": {},
-  "admin_info": {},
-  "student_info": {},
-  "guest_info": {}
-}
-```
-
-Возможные `role`:
-
-- `admin`
-- `employee`
-- `student`
-- `guest`
-
-Возможные `gender`:
-
-- `male`
-- `female`
-- `other`
-- `unspecified`
-
-### 4.2 Course
-
-```json
-{
-  "id": "uuid",
-  "title": { "ru": "Курс", "tj": "Курс" },
-  "description": { "ru": "Описание", "tj": "Тавсиф" },
-  "cover_image_url": "https://...",
-  "category": "security",
-  "status": "draft",
-  "platforms": ["web", "mobile"],
-  "estimated_minutes": 90,
-  "certificate_enabled": true,
-  "certificate_passing_score": 80,
-  "reviews_enabled": true,
-  "created_at": "2026-04-24T09:18:48Z",
-  "updated_at": "2026-04-24T09:34:14Z"
-}
-```
-
-Возможные `status`:
-
-- `draft`
-- `published`
-- `archived`
-
-Возможные `platforms`:
-
-- `web`
-- `mobile`
-- `telegram`
-
-### 4.3 Quiz
-
-```json
-{
-  "id": "uuid",
-  "title": { "ru": "Тест", "tj": "Тест" },
-  "description": { "ru": "Описание", "tj": "Тавсиф" },
-  "category": "security",
-  "status": "draft",
-  "platforms": ["web"],
-  "time_limit_minutes": 30,
-  "passing_score": 70,
-  "max_attempts": 3,
-  "shuffle_questions": false,
-  "show_results": true,
-  "allow_retry": true,
-  "questions": [],
-  "created_at": "2026-04-24T09:18:48Z",
-  "updated_at": "2026-04-24T09:34:14Z"
-}
-```
-
-Возможные `status`:
-
-- `draft`
-- `published`
-- `archived`
-
-### 4.4 Question
-
-```json
-{
-  "id": "uuid",
-  "position": 1,
-  "type": "single_choice",
-  "prompt": { "ru": "Вопрос", "tj": "Савол" },
-  "explanation": { "ru": "Пояснение", "tj": "Шарҳ" },
-  "points": 1,
-  "required": true,
-  "config": {},
-  "created_at": "2026-04-24T09:18:48Z"
-}
-```
-
-Возможные `type`:
-
-- `single_choice`
-- `multiple_choice`
-- `true_false`
-- `short_answer`
-- `long_text`
-- `matching`
-- `ordering`
-- `fill_blank`
-- `image_choice`
-- `audio`
-- `video`
-- `code`
-
-### 4.5 Attempt
-
-```json
-{
-  "id": "uuid",
-  "quiz_id": "uuid",
-  "user_id": "uuid",
-  "started_at": "2026-04-24T09:18:48Z",
-  "finished_at": "2026-04-24T09:21:10Z",
-  "questions_snapshot": [],
-  "answers_data": [],
-  "total_earned": 8,
-  "total_max": 10,
-  "score_percent": 80,
-  "passed": true,
-  "needs_review": false
-}
-```
-
-### 4.6 AttemptAnswer
-
-```json
-{
-  "question_id": "uuid",
-  "selected_option_ids": ["uuid"],
-  "text_answer": "answer",
-  "boolean_answer": true,
-  "ordered_option_ids": ["uuid1", "uuid2"],
-  "matched_pairs": {
-    "left1": "right2"
-  }
-}
-```
-
-### 4.7 Enrollment
-
-```json
-{
-  "id": "uuid",
-  "course_id": "uuid",
-  "user_id": "uuid",
-  "status": "active",
-  "enrolled_at": "2026-04-24T09:18:48Z",
-  "completed_at": "2026-04-24T10:00:00Z"
-}
-```
-
-Возможные `status`:
-
-- `active`
-- `completed`
-- `dropped`
-
-### 4.8 Certificate
-
-```json
-{
-  "id": "uuid",
-  "enrollment_id": "uuid",
-  "user_id": "uuid",
-  "course_id": "uuid",
-  "attempt_id": "uuid",
-  "serial_number": "123-456-789",
-  "verify_hash": "long-hex-string",
-  "issued_at": "2026-04-24T10:00:00Z",
-  "pdf_url": "https://...",
-  "user_first_name": "John",
-  "user_last_name": "Doe",
-  "patronymic": "",
-  "course_title": { "ru": "Курс", "tj": "Курс" }
-}
-```
-
-### 4.9 CourseModule
-
-```json
-{
-  "id": "uuid",
-  "course_id": "uuid",
-  "position": 1,
-  "title": { "ru": "Модуль", "tj": "Модул" },
-  "description": { "ru": "Описание", "tj": "Тавсиф" }
-}
-```
-
-### 4.10 ContentBlock
-
-```json
-{
-  "id": "uuid",
-  "course_id": "uuid",
-  "module_id": null,
-  "position": 1,
-  "type": "text",
-  "title": { "ru": "Блок", "tj": "Блок" },
-  "payload": {}
-}
-```
-
-Возможные `type`:
-
-- `text`
-- `url`
-- `video`
-- `photo`
-- `file`
-
-### 4.11 ContentBlock payload shapes
-
-`text`:
-
-```json
-{
-  "content": {
-    "ru": "Текст",
-    "tj": "Матн"
-  }
-}
-```
-
-`url`:
-
-```json
-{
-  "url": "https://example.com",
-  "label": {
-    "ru": "Ссылка",
-    "tj": "Пайванд"
-  }
-}
-```
-
-`video`:
-
-```json
-{
-  "url": "https://example.com/video.mp4",
-  "provider": "direct",
-  "duration_seconds": 120
-}
-```
-
-Возможные `provider`:
-
-- `direct`
-- `youtube`
-
-`photo`:
-
-```json
-{
-  "url": "https://example.com/image.jpg",
-  "caption": {
-    "ru": "Подпись",
-    "tj": "Тавзеҳ"
-  }
-}
-```
-
-`file`:
-
-```json
-{
-  "url": "https://example.com/file.pdf",
-  "filename": "manual.pdf",
-  "size_bytes": 123456
-}
-```
-
-### 4.12 CourseTest
-
-```json
-{
-  "course_id": "uuid",
-  "module_id": null,
-  "quiz_id": "uuid",
-  "position": 1
-}
-```
-
-### 4.13 Review
-
-```json
-{
-  "id": "uuid",
-  "course_id": "uuid",
-  "user_id": "uuid",
-  "rating": 5,
-  "text": "Отличный курс",
-  "status": "pending",
-  "created_at": "2026-04-24T09:18:48Z",
-  "moderated_at": "2026-04-24T10:00:00Z"
-}
-```
-
-Возможные `status`:
-
-- `pending`
-- `approved`
-- `rejected`
-
-### 4.14 Notification
-
-```json
-{
-  "id": "uuid",
-  "user_id": "uuid",
-  "type": "system",
-  "title": { "ru": "Заголовок", "tj": "Сарлавҳа" },
-  "body": { "ru": "Текст", "tj": "Матн" },
-  "link": "https://...",
-  "read": false,
-  "created_at": "2026-04-24T09:18:48Z"
-}
-```
-
-Возможные `type`:
-
-- `course.published`
-- `certificate.issued`
-- `review.approved`
-- `enrollment.created`
-- `system`
-
-### 4.15 Webhook
-
-```json
-{
-  "id": "uuid",
-  "name": "CRM webhook",
-  "url": "https://example.com/hook",
-  "events": ["course.created", "attempt.passed"],
-  "secret": "plain-secret",
-  "status": "active",
-  "last_triggered_at": "2026-04-24T09:18:48Z",
-  "last_status_code": 200,
-  "last_error": "optional",
-  "deliveries": 10,
-  "failures": 2,
-  "created_at": "2026-04-24T09:18:48Z",
-  "updated_at": "2026-04-24T09:34:14Z"
-}
-```
-
-Важно:
-
-- сейчас backend действительно возвращает `secret` в API-ответах
-- frontend не должен логировать или показывать это поле без необходимости
-
-### 4.16 AuditLog
-
-```json
-{
-  "id": "uuid",
-  "type": "course.created",
-  "at": "2026-04-24T09:18:48Z",
-  "actor_id": "uuid",
-  "payload": {}
-}
-```
-
-## 5. Auth API
-
-### 5.1 `POST /auth/login`
-
-Request:
+Body:
 
 ```json
 {
@@ -613,43 +164,44 @@ Request:
 }
 ```
 
-- Frontend should show an Email field for first login; backend also still accepts `identifier` as a fallback.
+`identifier` ещё принимается для совместимости, но новый frontend должен отправлять `email`.
 
-Response `200 OK`:
+Response:
 
 ```json
 {
-  "token": "opaque-session-token",
-  "expires_at": "2026-04-25T09:41:46Z",
+  "token": "session-token",
+  "expires_at": "2026-05-06T22:11:02Z",
   "user": {
     "id": "uuid",
-    "username": "admin",
-    "role": "admin"
+    "email": "admin@local.test",
+    "is_admin": true,
+    "is_super_admin": true,
+    "first_name": "System",
+    "last_name": "Admin",
+    "is_male": false,
+    "created_at": "2026-05-06T14:08:12Z",
+    "updated_at": "2026-05-06T14:08:12Z"
   }
 }
 ```
 
-Логика:
+### GET `/auth/google/config`
 
-- Frontend should send email in `email` for the first login flow; backend still accepts `identifier` as a fallback
-- token не JWT
-- session хранится на backend в таблице `sessions`
-- при слишком большом числе неудачных попыток backend может вернуть `429 Too Many Requests`
-
-Пример ошибки throttling:
+Response:
 
 ```json
 {
-  "error": {
-    "code": "too_many_attempts",
-    "message": "too many login attempts, try again later"
-  }
+  "enabled": true,
+  "client_id": "497804149487-...apps.googleusercontent.com"
 }
 ```
 
-### 5.2 `POST /auth/google`
+Если `enabled=false`, кнопку Google лучше скрыть.
 
-Request:
+### POST `/auth/google`
+
+Body:
 
 ```json
 {
@@ -657,216 +209,276 @@ Request:
 }
 ```
 
-Response `200 OK`:
+Response: такой же, как login.
 
-- тот же `LoginResult`, что и у `POST /auth/login`
+Frontend должен получать `id_token` через Google SDK. Backend сам не открывает Google popup.
 
-Текущее поведение backend:
+### GET `/auth/me`
 
-- frontend сам получает `id_token` через Google SDK
-- backend валидирует `id_token` через Google tokeninfo
-- если пользователь найден по `google_id`, он логинится
-- если пользователь найден по `email`, backend привязывает `google_id`
-- если пользователя нет, backend создает нового пользователя с ролью `guest`
-
-### 5.3 `GET /auth/me`
+Protected.
 
 Response:
 
 ```json
 {
   "user": {},
-  "session": {}
+  "session": {
+    "token": "session-token",
+    "user_id": "uuid",
+    "ip_address": "127.0.0.1",
+    "user_agent": "browser",
+    "created_at": "2026-05-06T14:11:02Z",
+    "expires_at": "2026-05-06T22:11:02Z"
+  }
 }
 ```
 
-### 5.4 `POST /auth/logout`
+### PUT `/auth/me`
 
-Response:
-
-- `204 No Content`
-
-## 6. Users API
-
-### 6.1 `GET /users`
-
-Admin only.
-
-Query:
-
-- `search`
-- `role`
-- `is_active`
-- `limit`
-- `offset`
-
-### 6.2 `POST /users`
-
-Admin only.
-
-Body: `CreateUserParams`
-
-Основные поля:
-
-- `username`
-- `email`
-- `google_id`
-- `password`
-- `role`
-- `first_name`
-- `last_name`
-- `patronymic`
-- `phone`
-- `gender`
-- `address`
-- `city`
-- `avatar_url`
-- `employee_info`
-- `admin_info`
-- `student_info`
-- `guest_info`
-
-### 6.3 `GET /users/{userID}`
-
-Admin only.
-
-### 6.4 `PUT /users/{userID}`
-
-Admin only.
-
-Body: `UpdateUserParams`
-
-### 6.5 `DELETE /users/{userID}`
-
-Admin only.
-
-Важно:
-
-- это soft delete через деактивацию пользователя
-- endpoint возвращает `204 No Content`
-
-## 7. Courses API
-
-### 7.1 `GET /courses`
-
-Query:
-
-- `search`
-- `status`
-- `category`
-- `platform`
-- `limit`
-- `offset`
-
-### 7.2 `GET /courses/{courseID}`
-
-### 7.3 `POST /courses`
-
-Admin only.
-
-Body: `CreateCourseParams`
-
-### 7.4 `PUT /courses/{courseID}`
-
-Admin only.
-
-Body: `UpdateCourseParams`
-
-### 7.5 `DELETE /courses/{courseID}`
-
-Admin only.
-
-Важно:
-
-- курс не удаляется физически
-- backend архивирует его через `status = archived`
-
-## 8. Quizzes API
-
-### 8.1 `GET /quizzes`
-
-Query:
-
-- `search`
-- `status`
-- `category`
-- `platform`
-- `limit`
-- `offset`
-
-### 8.2 `GET /quizzes/{quizID}`
-
-Возвращает quiz вместе с `questions`.
-
-### 8.3 `POST /quizzes`
-
-Admin only.
-
-Body: `CreateQuizParams`
-
-Важно:
-
-- нужен хотя бы один вопрос
-- если `max_attempts <= 0`, backend ставит `3`
-- если `points <= 0`, для вопроса backend ставит `1`
-
-### 8.4 `PUT /quizzes/{quizID}`
-
-Admin only.
-
-Body: `UpdateQuizParams`
-
-### 8.5 `DELETE /quizzes/{quizID}`
-
-Admin only.
-
-Важно:
-
-- quiz не удаляется физически
-- backend архивирует его через `status = archived`
-
-## 9. Attempts API
-
-### 9.1 `POST /quizzes/{quizID}/attempts`
+Protected. Пользователь редактирует только свой профиль.
 
 Body:
 
 ```json
 {
-  "user_id": "optional-admin-only",
-  "started_at": "2026-04-24T09:18:48Z",
-  "answers": [
+  "first_name": "Ali",
+  "last_name": "Karimov",
+  "phone": "900000000",
+  "is_male": true,
+  "city": "Худжанд",
+  "birth_date": "2001-07-12",
+  "avatar_url": "/uploads/avatar.png"
+}
+```
+
+### POST `/auth/password/change`
+
+Protected.
+
+Body:
+
+```json
+{
+  "current_password": "Old123!",
+  "new_password": "New123!"
+}
+```
+
+### POST `/auth/password/forgot`
+
+Public.
+
+Body:
+
+```json
+{
+  "email": "student@local.test"
+}
+```
+
+Local testing response may include `reset_token` if `AUTH_PASSWORD_RESET_RETURN_TOKEN=true`.
+
+### POST `/auth/password/reset`
+
+Public.
+
+Body:
+
+```json
+{
+  "token": "reset-token",
+  "new_password": "New123!"
+}
+```
+
+### POST `/auth/logout`
+
+Protected. Response `204`.
+
+## Courses
+
+### GET `/courses`
+
+Query:
+
+- `search`
+- `status`
+- `category`
+- `platform`
+- `limit`
+- `offset`
+
+Response item:
+
+```json
+{
+  "id": "uuid",
+  "title": { "ru": "Язык Go", "tj": "Забони Go" },
+  "description": { "ru": "Описание", "tj": "Тавсиф" },
+  "cover_image_url": "/uploads/cover.png",
+  "video_url": "https://youtube.com/watch?v=...",
+  "quiz_id": "uuid",
+  "category": "programming",
+  "estimated_minutes": 40,
+  "created_at": "2026-05-06T14:08:12Z",
+  "updated_at": "2026-05-06T14:08:12Z"
+}
+```
+
+Скрыты: `status`, `platforms`, `certificate_enabled`, `certificate_passing_score`, `reviews_enabled`.
+
+### POST `/courses`
+
+Admin.
+
+Body:
+
+```json
+{
+  "title": { "ru": "Язык Go", "tj": "Забони Go" },
+  "description": { "ru": "Описание", "tj": "Тавсиф" },
+  "cover_image_url": "/uploads/cover.png",
+  "video_url": "https://youtube.com/watch?v=w_PlmLNWuSU",
+  "category": "programming",
+  "estimated_minutes": 40
+}
+```
+
+### PUT `/courses/{courseID}`
+
+Admin. Body такой же, как create.
+
+### DELETE `/courses/{courseID}`
+
+Admin. Это archive, не hard delete. После удаления курс не должен отображаться в обычном списке.
+
+## Quizzes
+
+### GET `/quizzes`
+
+Response item:
+
+```json
+{
+  "id": "uuid",
+  "title": { "ru": "Тест Go", "tj": "Тести Go" },
+  "description": { "ru": "Описание", "tj": "Тавсиф" },
+  "course_id": "uuid",
+  "category": "programming",
+  "time_limit_minutes": 30,
+  "passing_score": 80,
+  "passing_points": 8,
+  "max_attempts": 3,
+  "retake_cooldown_days": 30,
+  "allow_retry": true,
+  "created_at": "2026-05-06T14:08:12Z",
+  "updated_at": "2026-05-06T14:08:12Z"
+}
+```
+
+### GET `/quizzes/{quizID}`
+
+Возвращает quiz + `questions`.
+
+В `questions[].config` правильные ответы скрыты. Frontend не должен ожидать `is_correct`, `correct`, `accepted_answers`.
+
+### POST `/quizzes`
+
+Admin. Backend принимает snake_case и camelCase.
+
+Body:
+
+```json
+{
+  "title": { "ru": "Тест Go", "tj": "Тести Go" },
+  "description": { "ru": "Описание", "tj": "Тавсиф" },
+  "passingPoints": 8,
+  "maxAttempts": 3,
+  "retakeCooldownDays": 30,
+  "questions": [
     {
-      "question_id": "uuid",
-      "selected_option_ids": ["uuid"],
-      "text_answer": "answer",
-      "boolean_answer": true,
-      "ordered_option_ids": ["uuid1", "uuid2"],
-      "matched_pairs": {
-        "left1": "right2"
+      "position": 1,
+      "type": "single_choice",
+      "prompt": { "ru": "Go это язык?", "tj": "Go забон аст?" },
+      "points": 1,
+      "required": true,
+      "config": {
+        "options": [
+          { "id": "yes", "text": { "ru": "Да", "tj": "Ҳа" }, "isCorrect": true },
+          { "id": "no", "text": { "ru": "Нет", "tj": "Не" }, "isCorrect": false }
+        ]
       }
     }
   ]
 }
 ```
 
-Логика:
+Правило `passingPoints`:
 
-- non-admin не может отправить попытку за другого пользователя
-- backend считает число предыдущих попыток
-- если `attemptCount >= quiz.max_attempts`, вернет conflict
-- сохраняется snapshot вопросов и answers_data
+- backend считает максимум как сумму `questions[].points`;
+- если максимум `10`, `passingPoints` не может быть больше `10`;
+- если максимум `5`, `passingPoints` не может быть больше `5`;
+- значение не фиксировано и считается для каждого теста.
 
-Автооценка сейчас работает для:
+Ошибка:
 
-- `single_choice`
-- `image_choice`
-- `multiple_choice`
-- `true_false`
-- `short_answer`
-- `fill_blank`
+```json
+{
+  "field": "passing_points",
+  "code": "too_high",
+  "message": "Баллы для прохождения не могут быть больше максимального балла теста (5.00)"
+}
+```
 
-Для остальных типов backend ставит `needs_review = true`:
+### PUT `/quizzes/{quizID}`
+
+Admin. Body как create.
+
+### DELETE `/quizzes/{quizID}`
+
+Admin. Archive.
+
+## Question config
+
+`single_choice` / `image_choice`:
+
+```json
+{
+  "options": [
+    { "id": "a", "text": { "ru": "A", "tj": "A" }, "isCorrect": true },
+    { "id": "b", "text": { "ru": "B", "tj": "B" }, "isCorrect": false }
+  ]
+}
+```
+
+`multiple_choice`:
+
+```json
+{
+  "options": [
+    { "id": "a", "text": { "ru": "A", "tj": "A" }, "isCorrect": true },
+    { "id": "b", "text": { "ru": "B", "tj": "B" }, "isCorrect": true }
+  ]
+}
+```
+
+`true_false`:
+
+```json
+{
+  "correct": true
+}
+```
+
+`short_answer` / `fill_blank`:
+
+```json
+{
+  "acceptedAnswers": ["go", "golang"]
+}
+```
+
+Manual review types:
 
 - `long_text`
 - `matching`
@@ -875,12 +487,55 @@ Body:
 - `video`
 - `code`
 
-Текущий review flow:
+## Attempts
 
-- для попыток с `needs_review = true` теперь есть admin endpoint `POST /api/v1/attempts/{attemptID}/review`
-- review поддерживает legacy `passed/comment` и manual scoring через `scores[]`
+### POST `/quizzes/{quizID}/attempts`
 
-### 9.2 `GET /attempts`
+Protected.
+
+Body:
+
+```json
+{
+  "started_at": "2026-05-06T14:00:00Z",
+  "answers": [
+    {
+      "question_id": "uuid",
+      "selected_option_ids": ["yes"]
+    }
+  ]
+}
+```
+
+Admin может передать `user_id`, обычный пользователь не может сдавать за другого.
+
+Response:
+
+```json
+{
+  "id": "uuid",
+  "quiz_id": "uuid",
+  "user_id": "uuid",
+  "started_at": "2026-05-06T14:00:00Z",
+  "finished_at": "2026-05-06T14:10:00Z",
+  "total_earned": 8,
+  "total_max": 10,
+  "score_percent": 80,
+  "passed": true
+}
+```
+
+Скрыты: `questions_snapshot`, `answers_data`, `needs_review`.
+
+Бизнес-правила:
+
+- сертификат уже выдан -> тест повторно сдавать нельзя;
+- `total_earned >= passing_points` -> попытка пройдена;
+- `total_earned < passing_points` -> попытка не пройдена;
+- после `max_attempts` неудачных/любых попыток сдача закрыта до `retake_cooldown_days`;
+- после cooldown попытки снова доступны.
+
+### GET `/attempts`
 
 Query:
 
@@ -889,21 +544,16 @@ Query:
 - `limit`
 - `offset`
 
-Non-admin видит только свои попытки.
+Обычный пользователь видит только свои attempts.
 
-### 9.3 `GET /attempts/{attemptID}`
+### POST `/attempts/{attemptID}/review`
 
-Non-admin может читать только свою попытку.
-
-### 9.4 `POST /attempts/{attemptID}/review`
-
-Admin only.
+Admin.
 
 Body:
 
 ```json
 {
-  "passed": true,
   "comment": "Проверено вручную",
   "scores": [
     {
@@ -915,46 +565,21 @@ Body:
 }
 ```
 
-`scores[]` нужен только для вопросов, которые backend не может оценить автоматически:
+Backend пересчитает `total_earned`, `score_percent`, `passed` по `passing_points`.
 
-- `long_text`
-- `matching`
-- `ordering`
-- `audio`
-- `video`
-- `code`
+## Enrollments
 
-Если `scores[]` передан, backend:
-
-- проверяет, что для всех manual-вопросов есть оценка;
-- пересчитывает `total_earned`;
-- пересчитывает `score_percent`;
-- выставляет `passed` по `quiz.passing_score`;
-- сохраняет breakdown в `review_scores`.
-
-Текущее поведение:
-
-- работает только для попыток с `needs_review = true`
-- сохраняет `reviewed_at`, `reviewer_id`, `review_comment`, `manual_passed`, `review_scores`
-- снимает `needs_review`
-- если передан `scores[]`, backend пересчитывает итоговые баллы и pass/fail
-
-## 10. Enrollments API
-
-### 10.1 `POST /enrollments`
-
-Body:
+### POST `/enrollments`
 
 ```json
 {
-  "course_id": "uuid",
-  "user_id": "optional-admin-only"
+  "course_id": "uuid"
 }
 ```
 
-Non-admin создает enrollment только для себя.
+Admin может передать `user_id`, обычный пользователь записывает только себя.
 
-### 10.2 `GET /enrollments`
+### GET `/enrollments`
 
 Query:
 
@@ -964,32 +589,15 @@ Query:
 - `limit`
 - `offset`
 
-Non-admin видит только свои enrollment-ы.
+### POST `/enrollments/{enrollmentID}/complete`
 
-### 10.3 `GET /enrollments/{enrollmentID}`
+Admin. Завершает курс и запускает auto certificate issue, если есть passed attempt.
 
-### 10.4 `POST /enrollments/{enrollmentID}/complete`
+## Certificates
 
-Admin only.
+### GET `/certificates`
 
-Важно:
-
-- endpoint завершает enrollment
-- после completion backend пытается автоматически выпустить сертификат, если:
-  - у курса `certificate_enabled = true`
-  - у пользователя есть подходящая passed attempt по этому курсу
-  - `course.certificate_passing_score` либо `0`, либо candidate attempt набрала не меньше этого порога; если порог задан, именно он является source of truth
-- если подходящего attempt нет, enrollment все равно успешно завершается
-
-## 11. Certificates API
-
-### 11.1 `GET /certificates/verify/{verifyHash}`
-
-Public endpoint.
-
-Используется для внешней проверки сертификата.
-
-### 11.2 `GET /certificates`
+Обычный пользователь видит только свои сертификаты.
 
 Query:
 
@@ -999,193 +607,138 @@ Query:
 - `limit`
 - `offset`
 
-Non-admin видит только свои сертификаты.
+### GET `/certificates/{certificateID}`
 
-### 11.3 `GET /certificates/{certificateID}`
+Protected.
 
-### 11.4 `POST /certificates`
+### GET `/certificates/verify/{verifyHash}`
 
-Admin only.
+Public.
 
-Body:
+### POST `/certificates`
+
+Admin override.
 
 ```json
 {
   "enrollment_id": "uuid",
   "attempt_id": "uuid",
-  "pdf_url": "https://..."
+  "pdf_url": "/uploads/cert.pdf"
 }
 ```
 
-Сертификат создается только если:
+## Course packages
 
-- enrollment существует
-- enrollment имеет статус `completed`
-- у курса `certificate_enabled = true`
-- attempt имеет `passed = true`
-- attempt принадлежит тому же пользователю
-- quiz attempt-а действительно привязан к этому курсу через `course_tests`
+### POST `/course-packages`
 
-Важно:
+Admin. Создаёт курс + тест + связь course_tests одним запросом.
 
-- выдача сертификата сейчас ручная
-- `course.certificate_passing_score` используется как source of truth для порога сертификата, а если он равен `0`, backend fallback-ится на `attempt.passed`
+```json
+{
+  "course": {
+    "title": { "ru": "Go", "tj": "Go" },
+    "description": { "ru": "Описание", "tj": "Тавсиф" },
+    "video_url": "https://youtube.com/watch?v=w_PlmLNWuSU"
+  },
+  "quiz": {
+    "passingPoints": 8,
+    "maxAttempts": 3,
+    "retakeCooldownDays": 30,
+    "questions": []
+  },
+  "link_position": 1
+}
+```
 
-## 12. Course Modules API
+## Course tests
 
-### 12.1 `GET /course-modules`
+### GET `/course-tests`
 
-Query:
-
-- `course_id`
-
-### 12.2 `GET /course-modules/{moduleID}`
-
-### 12.3 `POST /course-modules`
-
-Admin only.
-
-Body: `CreateCourseModuleParams`
-
-### 12.4 `PUT /course-modules/{moduleID}`
-
-Admin only.
-
-Body: `UpdateCourseModuleParams`
-
-### 12.5 `DELETE /course-modules/{moduleID}`
-
-Admin only.
-
-## 13. Content Blocks API
-
-### 13.1 `GET /content-blocks`
+Admin.
 
 Query:
 
 - `course_id`
 - `module_id`
 
-Важно:
+### POST `/course-tests`
 
-- можно передать только один из них
-- если не передать ни одного, backend вернет validation error
-
-### 13.2 `GET /content-blocks/{blockID}`
-
-### 13.3 `POST /content-blocks`
-
-Admin only.
-
-Body: `CreateContentBlockParams`
-
-Важно:
-
-- нужно передать ровно один из `course_id` или `module_id`
-- `position` должен быть больше `0`
-- `title` требует обе локали
-- `payload` валидируется в зависимости от `type`
-
-### 13.4 `PUT /content-blocks/{blockID}`
-
-Admin only.
-
-Body: `UpdateContentBlockParams`
-
-### 13.5 `DELETE /content-blocks/{blockID}`
-
-Admin only.
-
-## 14. Course Tests API
-
-### 14.1 `GET /course-tests`
-
-Admin only.
-
-Query:
-
-- `course_id`
-- `module_id`
-
-Важно:
-
-- можно передать только один из них
-
-### 14.2 `POST /course-tests`
-
-Admin only.
-
-Body:
+Admin.
 
 ```json
 {
   "course_id": "uuid",
-  "module_id": null,
   "quiz_id": "uuid",
   "position": 1
 }
 ```
 
-Важно:
+или:
 
-- нужно передать ровно один из `course_id` или `module_id`
-
-### 14.3 `DELETE /course-tests/{courseTestID}`
-
-Admin only.
-
-Новый основной контракт - удаление по `id` через path:
-
-```text
-DELETE /api/v1/course-tests/{courseTestID}
+```json
+{
+  "module_id": "uuid",
+  "quiz_id": "uuid",
+  "position": 1
+}
 ```
 
-Для compatibility старый query-param вариант пока тоже оставлен:
+### DELETE `/course-tests/{courseTestID}`
+
+Основной вариант удаления.
+
+Старый compatibility вариант ещё работает:
 
 ```text
-DELETE /api/v1/course-tests?course_id=...&quiz_id=...
-DELETE /api/v1/course-tests?module_id=...&quiz_id=...
+DELETE /course-tests?course_id=...&quiz_id=...
+DELETE /course-tests?module_id=...&quiz_id=...
 ```
 
-Это текущий контракт backend.
+## Course modules
 
-## 15. Reviews API
+- `GET /course-modules?course_id=uuid`
+- `GET /course-modules/{moduleID}`
+- `POST /course-modules` admin
+- `PUT /course-modules/{moduleID}` admin
+- `DELETE /course-modules/{moduleID}` admin
 
-### 15.1 `GET /reviews`
+## Content blocks
 
-Query:
+- `GET /content-blocks?course_id=uuid`
+- `GET /content-blocks?module_id=uuid`
+- `GET /content-blocks/{blockID}`
+- `POST /content-blocks` admin
+- `PUT /content-blocks/{blockID}` admin
+- `DELETE /content-blocks/{blockID}` admin
 
-- `course_id`
-- `user_id`
-- `status`
-- `limit`
-- `offset`
+`content-blocks` требует ровно один target: `course_id` или `module_id`.
 
-### 15.2 `POST /reviews`
+Types:
 
-Body:
+- `text`
+- `url`
+- `video`
+- `photo`
+- `file`
+
+## Reviews
+
+- `GET /reviews`
+- `POST /reviews`
+- `GET /reviews/{reviewID}`
+- `POST /reviews/{reviewID}/moderate` admin
+
+Create:
 
 ```json
 {
   "course_id": "uuid",
-  "user_id": "optional",
   "rating": 5,
-  "text": "Отличный курс"
+  "text": "Хороший курс"
 }
 ```
 
-Важно:
-
-- это отзывы на курсы
-- это не review endpoint для попыток
-
-### 15.3 `GET /reviews/{reviewID}`
-
-### 15.4 `POST /reviews/{reviewID}/moderate`
-
-Admin only.
-
-Body:
+Moderate:
 
 ```json
 {
@@ -1193,169 +746,73 @@ Body:
 }
 ```
 
-Допустимые значения:
+## Notifications
 
-- `approved`
-- `rejected`
+- `GET /notifications`
+- `GET /notifications/{notificationID}`
+- `POST /notifications/{notificationID}/read`
+- `POST /notifications` admin
 
-## 16. Notifications API
+Обычный пользователь видит только свои notifications.
 
-### 16.1 `GET /notifications`
+## Uploads
 
-Query:
+### POST `/uploads`
 
-- `user_id`
-- `type`
-- `read`
-- `limit`
-- `offset`
+Admin.
 
-Non-admin видит только свои уведомления.
+`multipart/form-data`:
 
-### 16.2 `GET /notifications/{notificationID}`
-
-### 16.3 `POST /notifications`
-
-Admin only.
-
-Body: `CreateNotificationParams`
-
-### 16.4 `POST /notifications/{notificationID}/read`
-
-Помечает уведомление прочитанным и возвращает обновленный объект.
-
-## 17. Webhooks API
-
-### 17.1 `GET /webhooks`
-
-Admin only.
-
-Query:
-
-- `status`
-- `limit`
-- `offset`
+- `file`: файл
+- `type`: `image | video | file | avatar`
 
 Response:
-
-- возвращает webhook-объекты без поля `secret`
-
-### 17.2 `POST /webhooks`
-
-Admin only.
-
-Body:
 
 ```json
 {
-  "name": "CRM",
-  "url": "https://example.com/hook",
-  "events": ["course.created", "attempt.passed"],
-  "secret": "plain-secret",
-  "status": "active"
+  "url": "/uploads/2026/05/file.png",
+  "filename": "file.png",
+  "size_bytes": 12345
 }
 ```
 
-Response:
+## Webhooks
 
-- backend возвращает `secret` только в ответе на create
+Admin only:
 
-### 17.3 `GET /webhooks/{webhookID}`
+- `GET /webhooks`
+- `POST /webhooks`
+- `GET /webhooks/{webhookID}`
+- `PUT /webhooks/{webhookID}`
+- `DELETE /webhooks/{webhookID}`
 
-Admin only.
+`secret` возвращается только в response на create. В list/get/update его нет.
 
-Response:
+## Audit logs
 
-- возвращает webhook без `secret`
+Admin only:
 
-### 17.4 `PUT /webhooks/{webhookID}`
+- `GET /audit-logs`
+- `GET /audit-logs/{auditLogID}`
 
-Admin only.
+`POST /audit-logs` нет.
 
-Body: `UpdateWebhookParams`
+## Access summary
 
-Response:
+- Public: health, register, login, Google config/login, forgot/reset password, certificate verify, uploads files.
+- Auth user: profile, courses, quizzes, attempts, enrollments, certificates, reviews, notifications.
+- Admin: content management, tests, attempts review, completion, certificates override, uploads, webhooks, audit logs.
+- Super admin: users management.
 
-- возвращает webhook без `secret`
+## Frontend checklist
 
-### 17.5 `DELETE /webhooks/{webhookID}`
-
-Admin only.
-
-Важно:
-
-- webhook CRUD реализован
-- `secret` больше не отдается в `GET /webhooks`, `GET /webhooks/{id}` и `PUT /webhooks/{id}`
-- `secret` приходит только один раз в ответе на `POST /webhooks`
-- backend теперь пытается доставлять webhook-события по audit/app events
-- используется HMAC подпись в заголовке `X-LMS-Signature`
-- заголовки доставки:
-  - `X-LMS-Event`
-  - `X-LMS-Delivery-ID`
-  - `X-LMS-Timestamp`
-  - `X-LMS-Signature`
-- поля `deliveries`, `failures`, `last_triggered_at`, `last_status_code`, `last_error` теперь обновляются при доставке
-- delivery для audit-webhook теперь идёт через durable outbox worker, а не только best-effort
-
-## 18. Audit Logs API
-
-### 18.1 `GET /audit-logs`
-
-Admin only.
-
-Query:
-
-- `type`
-- `actor_id`
-- `limit`
-- `offset`
-
-### 18.2 `GET /audit-logs/{auditLogID}`
-
-Admin only.
-
-Важно:
-
-- публичного `POST /audit-logs` больше нет
-- audit logs теперь читаются через API, а новые записи создаются backend-ом как внутренний side effect части мутаций
-
-## 19. Что важно знать frontend-команде
-
-### 19.1 Сейчас уже реализовано
-
-- логин по username/email
-- Google Sign-In
-- opaque session auth
-- курсы, тесты, попытки, enrollment-ы, сертификаты
-- модули и контентные блоки
-- отзывы и уведомления
-- CRUD для webhooks
-- read API для audit logs + внутреннее audit logging части мутаций
-
-### 19.2 Сейчас не реализовано
-
-- websocket layer
-- Redis-backed distributed session cache для multi-node deployment
-
-### 19.3 Upload API
-
-- `POST /api/v1/uploads`
-- доступ: `admin`
-- content-type: `multipart/form-data`
-- form fields:
-  - `type`: `image | video | file | avatar`
-  - `file`: сам файл
-- response:
-  - `url`: публичный путь файла вида `/uploads/...`
-  - `filename`: исходное имя файла
-  - `size_bytes`: размер файла
-- backend сохраняет файлы в локальное файловое хранилище и раздает их через `/uploads/*`
-
-### 19.4 Что считать текущими архитектурными особенностями
-
-- list endpoint-ы возвращают envelope `data/total/limit/offset`
-- `DELETE /course-tests` использует query params
-- `webhook.secret` возвращается только один раз при create
-- login endpoint теперь может отвечать `429 too_many_attempts`
-- backend поддерживает CORS через `HTTP_CORS_ALLOWED_ORIGINS`
-- `course.certificate_passing_score` используется как source of truth для порога сертификата
+- Использовать `email`, не `username`.
+- Хранить и отправлять Bearer token.
+- Для lists читать `response.data`.
+- Показывать `message` из ошибок.
+- Если есть `field`, подсветить один input.
+- Если есть `fields`, подсветить все поля.
+- Не ожидать правильные ответы в quiz response.
+- Не показывать тест повторно после успешного сертификата.
+- Для Google брать `client_id` из `/auth/google/config`.
+- Для локального сброса пароля token может вернуться из `/auth/password/forgot`, только если backend настроен на тестовый режим.

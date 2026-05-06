@@ -75,6 +75,21 @@ func (h *CertificatesHandler) GetCertificateByID(w nethttp.ResponseWriter, r *ne
 	}
 }
 
+func (h *CertificatesHandler) GetPublicCertificateByID(w nethttp.ResponseWriter, r *nethttp.Request) {
+	certificate, err := h.useCase.GetByID(r.Context(), chi.URLParam(r, "certificateID"))
+	if err != nil {
+		status := writeMappedError(w, err)
+		if status >= nethttp.StatusInternalServerError {
+			h.logger.ErrorContext(r.Context(), "get public certificate failed", slog.String("error", err.Error()))
+		}
+		return
+	}
+
+	if err := writeJSON(w, nethttp.StatusOK, certificate); err != nil {
+		h.logger.ErrorContext(r.Context(), "get public certificate response failed", slog.String("error", err.Error()))
+	}
+}
+
 func (h *CertificatesHandler) VerifyCertificate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	certificate, err := h.useCase.GetByVerifyHash(r.Context(), chi.URLParam(r, "verifyHash"))
 	if err != nil {

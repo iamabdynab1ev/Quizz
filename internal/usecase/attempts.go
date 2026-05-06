@@ -15,7 +15,8 @@ import (
 
 type attemptRepository interface {
 	GetQuizForAttempt(ctx context.Context, quizID string) (domain.Quiz, error)
-	CountUserQuizAttempts(ctx context.Context, quizID, userID string) (int, error)
+	GetUserQuizAttemptWindow(ctx context.Context, quizID, userID string, since *time.Time) (domain.AttemptWindow, error)
+	UserHasCourseCertificate(ctx context.Context, courseID, userID string) (bool, error)
 	CreateAttempt(ctx context.Context, params domain.CreateAttemptRecordParams) (domain.Attempt, error)
 	GetAttemptByID(ctx context.Context, attemptID string) (domain.Attempt, error)
 	ListAttempts(ctx context.Context, filter domain.AttemptListFilter) ([]domain.Attempt, int, error)
@@ -71,13 +72,20 @@ func (u *AttemptUseCase) Submit(ctx context.Context, params domain.SubmitAttempt
 		return domain.Attempt{}, fmt.Errorf("usecase attempts submit quiz load: %w", err)
 	}
 
-	attemptCount, err := u.repository.CountUserQuizAttempts(ctx, normalized.QuizID, normalized.UserID)
+	if err := u.ensureUserCanSubmitQuiz(ctx, quiz, normalized.UserID); err != nil {
+		return domain.Attempt{}, fmt.Errorf("usecase attempts submit access check: %w", err)
+	}
+
+	finishedAt := u.now().UTC()
+	attemptSince := attemptWindowStart(finishedAt, quiz.RetakeCooldownDays)
+	attemptWindow, err := u.repository.GetUserQuizAttemptWindow(ctx, normalized.QuizID, normalized.UserID, attemptSince)
 	if err != nil {
 		return domain.Attempt{}, fmt.Errorf("usecase attempts submit count attempts: %w", err)
 	}
 
-	if attemptCount >= quiz.MaxAttempts {
-		return domain.Attempt{}, fmt.Errorf("max attempts exceeded: %w", domain.ErrConflict)
+	maxAttempts := effectiveMaxAttempts(quiz.MaxAttempts)
+	if attemptWindow.Count >= maxAttempts {
+		return domain.Attempt{}, attemptLimitExceededError(attemptWindow, quiz.RetakeCooldownDays)
 	}
 
 	questionsSnapshot, err := json.Marshal(quiz.Questions)
@@ -96,8 +104,8 @@ func (u *AttemptUseCase) Submit(ctx context.Context, params domain.SubmitAttempt
 		scorePercent = roundToTwo(totalEarned / totalMax * 100)
 	}
 
-	passed := !needsReview && scorePercent >= float64(quiz.PassingScore)
-	finishedAt := u.now().UTC()
+	passingPoints := effectivePassingPoints(quiz, totalMax)
+	passed := !needsReview && totalEarned >= passingPoints
 	startedAt := finishedAt
 	if normalized.StartedAt != nil {
 		startedAt = normalized.StartedAt.UTC()
@@ -122,12 +130,14 @@ func (u *AttemptUseCase) Submit(ctx context.Context, params domain.SubmitAttempt
 
 	if u.audit != nil {
 		u.audit.Log(ctx, domain.AppEventAttemptFinished, map[string]any{
-			"attempt_id":    attempt.ID,
-			"quiz_id":       attempt.QuizID,
-			"user_id":       attempt.UserID,
-			"score_percent": attempt.ScorePercent,
-			"passed":        attempt.Passed,
-			"needs_review":  attempt.NeedsReview,
+			"attempt_id":     attempt.ID,
+			"quiz_id":        attempt.QuizID,
+			"user_id":        attempt.UserID,
+			"score_percent":  attempt.ScorePercent,
+			"total_earned":   attempt.TotalEarned,
+			"passing_points": passingPoints,
+			"passed":         attempt.Passed,
+			"needs_review":   attempt.NeedsReview,
 		})
 
 		if !attempt.NeedsReview {
@@ -137,10 +147,12 @@ func (u *AttemptUseCase) Submit(ctx context.Context, params domain.SubmitAttempt
 			}
 
 			u.audit.Log(ctx, eventType, map[string]any{
-				"attempt_id":    attempt.ID,
-				"quiz_id":       attempt.QuizID,
-				"user_id":       attempt.UserID,
-				"score_percent": attempt.ScorePercent,
+				"attempt_id":     attempt.ID,
+				"quiz_id":        attempt.QuizID,
+				"user_id":        attempt.UserID,
+				"score_percent":  attempt.ScorePercent,
+				"total_earned":   attempt.TotalEarned,
+				"passing_points": passingPoints,
 			})
 		}
 	}
@@ -213,7 +225,11 @@ func (u *AttemptUseCase) Review(ctx context.Context, params domain.ReviewAttempt
 
 		normalized.TotalEarned = roundToTwo(manualTotalEarned)
 		normalized.ScorePercent = manualScorePercent
-		normalized.Passed = manualScorePercent >= float64(quiz.PassingScore)
+		totalMax := current.TotalMax
+		if totalMax <= 0 {
+			totalMax = totalQuizQuestionPoints(quiz.Questions)
+		}
+		normalized.Passed = manualTotalEarned >= effectivePassingPoints(quiz, totalMax)
 
 		reviewScoresJSON, err := json.Marshal(reviewScores)
 		if err != nil {
@@ -302,6 +318,76 @@ func (u *AttemptUseCase) tryAutoIssueCertificate(ctx context.Context, quiz domai
 			slog.String("certificate_id", certificate.ID),
 		)
 	}
+}
+
+func (u *AttemptUseCase) ensureUserCanSubmitQuiz(ctx context.Context, quiz domain.Quiz, userID string) error {
+	if quiz.CourseID == nil || strings.TrimSpace(*quiz.CourseID) == "" {
+		return nil
+	}
+
+	hasCertificate, err := u.repository.UserHasCourseCertificate(ctx, strings.TrimSpace(*quiz.CourseID), userID)
+	if err != nil {
+		return err
+	}
+
+	if hasCertificate {
+		return domain.ConflictError("Сертификат по этому курсу уже выдан. Видео доступно, повторная сдача теста закрыта.")
+	}
+
+	return nil
+}
+
+func attemptWindowStart(now time.Time, cooldownDays int) *time.Time {
+	if cooldownDays <= 0 {
+		return nil
+	}
+
+	start := now.AddDate(0, 0, -cooldownDays)
+	return &start
+}
+
+func effectiveMaxAttempts(maxAttempts int) int {
+	if maxAttempts <= 0 {
+		return 3
+	}
+
+	return maxAttempts
+}
+
+func attemptLimitExceededError(window domain.AttemptWindow, cooldownDays int) error {
+	if cooldownDays > 0 && window.EarliestStartedAt != nil {
+		unlockAt := window.EarliestStartedAt.AddDate(0, 0, cooldownDays)
+		return domain.ConflictError(fmt.Sprintf(
+			"Лимит попыток исчерпан. Повторная сдача будет доступна после %s.",
+			unlockAt.Format("02.01.2006"),
+		))
+	}
+
+	return domain.ConflictError("Лимит попыток исчерпан. Повторная сдача теста недоступна.")
+}
+
+func effectivePassingPoints(quiz domain.Quiz, totalMax float64) float64 {
+	if quiz.PassingPoints > 0 {
+		return roundToTwo(quiz.PassingPoints)
+	}
+
+	if totalMax <= 0 {
+		return 0
+	}
+
+	if quiz.PassingScore > 0 {
+		return roundToTwo(totalMax * float64(quiz.PassingScore) / 100)
+	}
+
+	return roundToTwo(totalMax)
+}
+
+func totalQuizQuestionPoints(questions []domain.Question) float64 {
+	total := 0.0
+	for _, question := range questions {
+		total += question.Points
+	}
+	return roundToTwo(total)
 }
 
 func normalizeSubmitAttemptParams(params domain.SubmitAttemptParams) (domain.SubmitAttemptParams, error) {
@@ -592,8 +678,9 @@ func evaluateQuestion(question domain.Question, answer domain.AttemptAnswer) (fl
 func extractCorrectOptionIDs(config json.RawMessage) ([]string, bool) {
 	var payload struct {
 		Options []struct {
-			ID        string `json:"id"`
-			IsCorrect bool   `json:"is_correct"`
+			ID             string `json:"id"`
+			IsCorrect      bool   `json:"is_correct"`
+			IsCorrectCamel bool   `json:"isCorrect"`
 		} `json:"options"`
 	}
 
@@ -603,7 +690,7 @@ func extractCorrectOptionIDs(config json.RawMessage) ([]string, bool) {
 
 	ids := make([]string, 0)
 	for _, option := range payload.Options {
-		if option.IsCorrect {
+		if option.IsCorrect || option.IsCorrectCamel {
 			ids = append(ids, strings.TrimSpace(option.ID))
 		}
 	}
@@ -629,15 +716,21 @@ func extractCorrectBoolean(config json.RawMessage) (bool, bool) {
 
 func extractAcceptedAnswers(config json.RawMessage) ([]string, bool) {
 	var payload struct {
-		AcceptedAnswers []string `json:"accepted_answers"`
+		AcceptedAnswers      []string `json:"accepted_answers"`
+		AcceptedAnswersCamel []string `json:"acceptedAnswers"`
 	}
 
 	if err := json.Unmarshal(config, &payload); err != nil {
 		return nil, false
 	}
 
-	normalized := make([]string, 0, len(payload.AcceptedAnswers))
-	for _, answer := range payload.AcceptedAnswers {
+	answers := payload.AcceptedAnswers
+	if len(answers) == 0 {
+		answers = payload.AcceptedAnswersCamel
+	}
+
+	normalized := make([]string, 0, len(answers))
+	for _, answer := range answers {
 		trimmed := strings.ToLower(strings.TrimSpace(answer))
 		if trimmed == "" {
 			continue

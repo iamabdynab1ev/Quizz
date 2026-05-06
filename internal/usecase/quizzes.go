@@ -22,6 +22,13 @@ type QuizUseCase struct {
 	audit      *AuditLogger
 }
 
+const (
+	defaultQuizPassingScore       = 80
+	defaultQuizMaxAttempts        = 3
+	defaultQuizRetakeCooldownDays = 30
+	maxQuizRetakeCooldownDays     = 730
+)
+
 func NewQuizUseCase(repository quizRepository) *QuizUseCase {
 	return &QuizUseCase{repository: repository}
 }
@@ -147,21 +154,29 @@ func normalizeCreateQuizParams(params domain.CreateQuizParams) (domain.CreateQui
 		validation.add("time_limit_minutes", "must_be_positive", "Лимит времени должен быть больше 0")
 	}
 
-	validation.addIntRange("passing_score", params.PassingScore, 0, 100, "Процент прохождения")
-
-	if params.MaxAttempts <= 0 {
-		params.MaxAttempts = 3
-	}
-
 	questions, err := normalizeQuestionPayloads(params.Questions)
 	if err != nil {
 		return domain.CreateQuizParams{}, err
 	}
+	params.Questions = questions
+
+	passingScore, passingPoints, maxAttempts, retakeCooldownDays := normalizeQuizScoringAndAttempts(
+		"passing_points",
+		params.PassingScore,
+		params.PassingPoints,
+		params.MaxAttempts,
+		params.RetakeCooldownDays,
+		questions,
+		&validation,
+	)
+	params.PassingScore = passingScore
+	params.PassingPoints = passingPoints
+	params.MaxAttempts = maxAttempts
+	params.RetakeCooldownDays = retakeCooldownDays
 
 	if err := validation.err(); err != nil {
 		return domain.CreateQuizParams{}, err
 	}
-	params.Questions = questions
 
 	return params, nil
 }
@@ -188,23 +203,83 @@ func normalizeUpdateQuizParams(params domain.UpdateQuizParams) (domain.UpdateQui
 		validation.add("time_limit_minutes", "must_be_positive", "Лимит времени должен быть больше 0")
 	}
 
-	validation.addIntRange("passing_score", params.PassingScore, 0, 100, "Процент прохождения")
-
-	if params.MaxAttempts <= 0 {
-		validation.add("max_attempts", "must_be_positive", "Количество попыток должно быть больше 0")
-	}
-
 	questions, err := normalizeQuestionPayloads(params.Questions)
 	if err != nil {
 		return domain.UpdateQuizParams{}, err
 	}
+	params.Questions = questions
+
+	passingScore, passingPoints, maxAttempts, retakeCooldownDays := normalizeQuizScoringAndAttempts(
+		"passing_points",
+		params.PassingScore,
+		params.PassingPoints,
+		params.MaxAttempts,
+		params.RetakeCooldownDays,
+		questions,
+		&validation,
+	)
+	params.PassingScore = passingScore
+	params.PassingPoints = passingPoints
+	params.MaxAttempts = maxAttempts
+	params.RetakeCooldownDays = retakeCooldownDays
 
 	if err := validation.err(); err != nil {
 		return domain.UpdateQuizParams{}, err
 	}
-	params.Questions = questions
 
 	return params, nil
+}
+
+func normalizeQuizScoringAndAttempts(
+	passingPointsField string,
+	passingScore int,
+	passingPoints float64,
+	maxAttempts int,
+	retakeCooldownDays int,
+	questions []domain.QuestionPayload,
+	validation *fieldValidationBuilder,
+) (int, float64, int, int) {
+	if passingScore <= 0 {
+		passingScore = defaultQuizPassingScore
+	}
+	validation.addIntRange("passing_score", passingScore, 0, 100, "Процент прохождения")
+
+	if passingPoints < 0 {
+		validation.add(passingPointsField, "must_be_non_negative", "Баллы для прохождения не могут быть меньше 0")
+	}
+
+	totalPoints := totalQuestionPayloadPoints(questions)
+	if passingPoints > 0 && totalPoints > 0 && passingPoints > totalPoints {
+		validation.add(passingPointsField, "too_high", fmt.Sprintf(
+			"Баллы для прохождения не могут быть больше максимального балла теста (%.2f)",
+			totalPoints,
+		))
+	}
+
+	if passingPoints <= 0 && totalPoints > 0 {
+		passingPoints = roundToTwo(totalPoints * float64(passingScore) / 100)
+	}
+
+	if maxAttempts <= 0 {
+		maxAttempts = defaultQuizMaxAttempts
+	}
+
+	if retakeCooldownDays <= 0 {
+		retakeCooldownDays = defaultQuizRetakeCooldownDays
+	}
+	if retakeCooldownDays > maxQuizRetakeCooldownDays {
+		validation.add("retake_cooldown_days", "out_of_range", "Пауза перед новой сдачей не может быть больше 730 дней")
+	}
+
+	return passingScore, roundToTwo(passingPoints), maxAttempts, retakeCooldownDays
+}
+
+func totalQuestionPayloadPoints(questions []domain.QuestionPayload) float64 {
+	total := 0.0
+	for _, question := range questions {
+		total += question.Points
+	}
+	return roundToTwo(total)
 }
 
 func normalizeQuizListFilter(filter domain.QuizListFilter) (domain.QuizListFilter, error) {
@@ -302,11 +377,13 @@ func normalizeQuestionPayloads(questions []domain.QuestionPayload) ([]domain.Que
 func validateQuestionConfig(field string, questionType domain.QuestionType, config []byte) error {
 	var payload struct {
 		Options []struct {
-			ID        string `json:"id"`
-			IsCorrect bool   `json:"is_correct"`
+			ID             string `json:"id"`
+			IsCorrect      bool   `json:"is_correct"`
+			IsCorrectCamel bool   `json:"isCorrect"`
 		} `json:"options"`
-		Correct         *bool    `json:"correct"`
-		AcceptedAnswers []string `json:"accepted_answers"`
+		Correct              *bool    `json:"correct"`
+		AcceptedAnswers      []string `json:"accepted_answers"`
+		AcceptedAnswersCamel []string `json:"acceptedAnswers"`
 	}
 
 	if err := json.Unmarshal(config, &payload); err != nil {
@@ -337,7 +414,11 @@ func validateQuestionConfig(field string, questionType domain.QuestionType, conf
 			validation.add(field+".correct", "required", "Укажите правильное значение true или false")
 		}
 	case domain.QuestionTypeShortAnswer, domain.QuestionTypeFillBlank:
-		if len(normalizeStringSlice(payload.AcceptedAnswers)) == 0 {
+		acceptedAnswers := payload.AcceptedAnswers
+		if len(acceptedAnswers) == 0 {
+			acceptedAnswers = payload.AcceptedAnswersCamel
+		}
+		if len(normalizeStringSlice(acceptedAnswers)) == 0 {
 			validation.add(field+".accepted_answers", "required", "Добавьте минимум один правильный текстовый ответ")
 		}
 	}
@@ -346,8 +427,9 @@ func validateQuestionConfig(field string, questionType domain.QuestionType, conf
 }
 
 func validateChoiceOptions(options []struct {
-	ID        string `json:"id"`
-	IsCorrect bool   `json:"is_correct"`
+	ID             string `json:"id"`
+	IsCorrect      bool   `json:"is_correct"`
+	IsCorrectCamel bool   `json:"isCorrect"`
 }) (int, bool) {
 	if len(options) == 0 {
 		return 0, false
@@ -364,7 +446,7 @@ func validateChoiceOptions(options []struct {
 			return correctCount, false
 		}
 		seenIDs[id] = struct{}{}
-		if option.IsCorrect {
+		if option.IsCorrect || option.IsCorrectCamel {
 			correctCount++
 		}
 	}

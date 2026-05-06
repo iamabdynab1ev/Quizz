@@ -41,6 +41,18 @@ func (s *authHandlerUseCaseStub) UpdateProfile(context.Context, domain.UpdatePro
 	return domain.User{}, nil
 }
 
+func (s *authHandlerUseCaseStub) ChangePassword(context.Context, domain.ChangePasswordParams) error {
+	return nil
+}
+
+func (s *authHandlerUseCaseStub) ForgotPassword(context.Context, domain.ForgotPasswordParams) (domain.ForgotPasswordResult, error) {
+	return domain.ForgotPasswordResult{}, nil
+}
+
+func (s *authHandlerUseCaseStub) ResetPassword(context.Context, domain.ResetPasswordParams) error {
+	return nil
+}
+
 func (s *authHandlerUseCaseStub) Logout(context.Context, string) error {
 	return nil
 }

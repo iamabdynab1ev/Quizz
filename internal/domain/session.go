@@ -66,6 +66,27 @@ type UpdateProfileParams struct {
 	BirthDate    *string `json:"birth_date,omitempty"`
 }
 
+type ChangePasswordParams struct {
+	UserID          string  `json:"-"`
+	SessionToken    string  `json:"-"`
+	CurrentPassword *string `json:"current_password,omitempty"`
+	NewPassword     string  `json:"new_password"`
+}
+
+type ForgotPasswordParams struct {
+	Email string `json:"email"`
+}
+
+type ForgotPasswordResult struct {
+	ResetToken *string    `json:"reset_token,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+}
+
+type ResetPasswordParams struct {
+	Token       string `json:"token"`
+	NewPassword string `json:"new_password"`
+}
+
 type LoginResult struct {
 	Token     string     `json:"token"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`

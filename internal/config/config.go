@@ -36,10 +36,12 @@ type HTTPConfig struct {
 }
 
 type AuthConfig struct {
-	SessionTTL      time.Duration
-	SessionCacheTTL time.Duration
-	BcryptCost      int
-	LoginLockout    LoginLockoutConfig
+	SessionTTL               time.Duration
+	SessionCacheTTL          time.Duration
+	BcryptCost               int
+	LoginLockout             LoginLockoutConfig
+	PasswordResetTokenTTL    time.Duration
+	PasswordResetReturnToken bool
 }
 
 type LoginLockoutConfig struct {
@@ -147,6 +149,16 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("config load auth login lockout scope: %w", err)
 	}
 
+	passwordResetTokenTTL, err := getDuration("AUTH_PASSWORD_RESET_TOKEN_TTL", 15*time.Minute)
+	if err != nil {
+		return Config{}, fmt.Errorf("config load auth password reset token ttl: %w", err)
+	}
+
+	passwordResetReturnToken, err := getBool("AUTH_PASSWORD_RESET_RETURN_TOKEN", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("config load auth password reset return token: %w", err)
+	}
+
 	googleDefaultRole, err := getEnum("AUTH_GOOGLE_DEFAULT_ROLE", "student", []string{"admin", "employee", "student", "guest"})
 	if err != nil {
 		return Config{}, fmt.Errorf("config load auth google default role: %w", err)
@@ -213,9 +225,11 @@ func Load() (Config, error) {
 			ShutdownTimeout:    shutdownTimeout,
 		},
 		Auth: AuthConfig{
-			SessionTTL:      sessionTTL,
-			SessionCacheTTL: sessionCacheTTL,
-			BcryptCost:      bcryptCost,
+			SessionTTL:               sessionTTL,
+			SessionCacheTTL:          sessionCacheTTL,
+			BcryptCost:               bcryptCost,
+			PasswordResetTokenTTL:    passwordResetTokenTTL,
+			PasswordResetReturnToken: passwordResetReturnToken,
 			LoginLockout: LoginLockoutConfig{
 				Enabled:     loginLockoutEnabled,
 				MaxAttempts: loginMaxAttempts,

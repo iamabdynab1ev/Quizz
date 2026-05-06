@@ -100,7 +100,23 @@ func TestPublicResponsesDoNotExposeInternalFields(t *testing.T) {
 		CreatedAt: now,
 		UpdatedAt: now,
 	}))
-	assertJSONDoesNotContain(t, userBody, "is_active")
+	assertJSONDoesNotContain(t, userBody, "is_active", "is_super_admin")
+
+	superAdminBody := mustMarshalString(t, toUserResponse(domain.User{
+		ID:           "super-admin-1",
+		Email:        &email,
+		Role:         domain.UserRoleAdmin,
+		IsSuperAdmin: true,
+		FirstName:    "System",
+		LastName:     "Admin",
+		Gender:       domain.GenderUnspecified,
+		IsActive:     true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}))
+	if !strings.Contains(superAdminBody, `"is_super_admin":true`) {
+		t.Fatalf("super admin response must expose is_super_admin=true, got %s", superAdminBody)
+	}
 }
 
 func mustMarshalString(t *testing.T, value any) string {

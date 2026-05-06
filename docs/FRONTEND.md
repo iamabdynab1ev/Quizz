@@ -1,224 +1,94 @@
-# QUIZ Frontend Guide
+﻿# QUIZ Frontend Guide
 
-Этот файл нужен фронтенд-команде как единый контракт по текущему backend.
+Короткая инструкция для подключения frontend к backend. Полный контракт endpoint-ов см. в [FRONTEND_API.md](FRONTEND_API.md).
 
-## 1. Базовая информация
+## Локальная схема
 
-- Base API: `/api/v1`
-- Public health: `/health` и `/api/v1/health`
-- Авторизация: `Authorization: Bearer <token>`
-- ID почти везде строка UUID
-- Время в ответах: RFC3339 / ISO-8601
-- Билингвальные поля передаются как объект:
-
-```json
-{
-  "ru": "Русский текст",
-  "tj": "Тоҷикӣ"
-}
-```
-
-- Backend включает `DisallowUnknownFields`, поэтому лишние поля в JSON body вызывают ошибку
-- Для большинства list endpoint-ов сейчас возвращается просто массив, без envelope `data/total`
-- Для большинства list endpoint-ов используются `limit` и `offset`
-- Ошибки приходят в формате:
-
-```json
-{
-  "error": "validation_error",
-  "message": "request validation failed"
-}
-```
-
-## 2. Общие правила работы фронта
-
-- После логина все запросы идут с `Authorization: Bearer <token>`
-- Для `GET /auth/me` токен обязателен
-- Если endpoint помечен как admin-only, обычный пользователь получит `403`
-- Для user-scoped данных non-admin может видеть только свои записи
-- Не отправляй в backend лишние поля в body
-- Не рассчитывай на `total` в list responses, его сейчас нет
-
-## 3. Матрица доступа
-
-| Зона | Методы | Кто может |
-| --- | --- | --- |
-| Health | `GET /health`, `GET /api/v1/health` | Public |
-| Auth | `POST /api/v1/auth/login`, `POST /api/v1/auth/google` | Public |
-| Verify certificate | `GET /api/v1/certificates/verify/{verifyHash}` | Public |
-| Auth session | `GET /api/v1/auth/me`, `POST /api/v1/auth/logout` | Любой авторизованный |
-| Learning content | `courses`, `quizzes`, `course-modules`, `content-blocks`, `reviews`, `attempts`, `enrollments`, `certificates`, `notifications` | Авторизованный, часть действий только admin |
-| Admin tools | `users`, `webhooks`, `audit-logs`, `course-tests`, moderation/review actions | Admin |
-
-## 4. Все доступные API
-
-### 4.1 Public
-
-| Method | Path | Notes |
-| --- | --- | --- |
-| GET | `/health` | Health check |
-| GET | `/api/v1/health` | Health check через API |
-| POST | `/api/v1/auth/login` | Логин по email/password (identifier still accepted) |
-| POST | `/api/v1/auth/google` | Логин через Google `id_token` |
-| GET | `/api/v1/certificates/verify/{verifyHash}` | Публичная проверка сертификата |
-
-### 4.2 Auth
-
-| Method | Path | Notes |
-| --- | --- | --- |
-| GET | `/api/v1/auth/me` | Возвращает текущего пользователя и сессию |
-| POST | `/api/v1/auth/logout` | Завершает текущую сессию |
-
-### 4.3 Users
-
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| GET | `/api/v1/users` | admin | Список пользователей |
-| POST | `/api/v1/users` | admin | Создание пользователя |
-| GET | `/api/v1/users/{userID}` | admin | Карточка пользователя |
-| PUT | `/api/v1/users/{userID}` | admin | Обновление пользователя |
-| DELETE | `/api/v1/users/{userID}` | admin | Деактивация пользователя |
-
-### 4.4 Courses
-
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| GET | `/api/v1/courses` | auth | Список курсов |
-| GET | `/api/v1/courses/{courseID}` | auth | Карточка курса |
-| POST | `/api/v1/courses` | admin | Создание |
-| PUT | `/api/v1/courses/{courseID}` | admin | Обновление |
-| DELETE | `/api/v1/courses/{courseID}` | admin | Архивирование |
-
-### 4.5 Quizzes
-
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| GET | `/api/v1/quizzes` | auth | Список тестов |
-| GET | `/api/v1/quizzes/{quizID}` | auth | Карточка теста |
-| POST | `/api/v1/quizzes` | admin | Создание |
-| PUT | `/api/v1/quizzes/{quizID}` | admin | Обновление |
-| DELETE | `/api/v1/quizzes/{quizID}` | admin | Архивирование |
-
-### 4.6 Attempts
-
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| POST | `/api/v1/quizzes/{quizID}/attempts` | auth | Отправка попытки |
-| GET | `/api/v1/attempts` | auth | Список попыток |
-| GET | `/api/v1/attempts/{attemptID}` | auth | Карточка попытки |
-| POST | `/api/v1/attempts/{attemptID}/review` | admin | Ручная проверка `needs_review`, поддерживает `passed/comment` и `scores[]` |
-
-### 4.7 Enrollments
-
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| POST | `/api/v1/enrollments` | auth | Записать пользователя на курс |
-| GET | `/api/v1/enrollments` | auth | Список записей |
-| GET | `/api/v1/enrollments/{enrollmentID}` | auth | Карточка записи |
-| POST | `/api/v1/enrollments/{enrollmentID}/complete` | admin | Завершить обучение, сертификат создаётся автоматически если условия выполнены |
-
-### 4.8 Certificates
-
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| GET | `/api/v1/certificates` | auth | Список сертификатов |
-| GET | `/api/v1/certificates/{certificateID}` | auth | Карточка сертификата |
-| POST | `/api/v1/certificates` | admin | Ручная выдача сертификата |
-| GET | `/api/v1/certificates/verify/{verifyHash}` | public | Проверка подлинности |
-
-### 4.9 Course modules
-
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| GET | `/api/v1/course-modules` | auth | Список модулей |
-| GET | `/api/v1/course-modules/{moduleID}` | auth | Карточка модуля |
-| POST | `/api/v1/course-modules` | admin | Создание |
-| PUT | `/api/v1/course-modules/{moduleID}` | admin | Обновление |
-| DELETE | `/api/v1/course-modules/{moduleID}` | admin | Удаление |
-
-### 4.10 Content blocks
-
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| GET | `/api/v1/content-blocks` | auth | Список блоков |
-| GET | `/api/v1/content-blocks/{blockID}` | auth | Карточка блока |
-| POST | `/api/v1/content-blocks` | admin | Создание |
-| PUT | `/api/v1/content-blocks/{blockID}` | admin | Обновление |
-| DELETE | `/api/v1/content-blocks/{blockID}` | admin | Удаление |
-
-### 4.11 Course tests
-
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| GET | `/api/v1/course-tests` | admin | Список связей курс/тест |
-| POST | `/api/v1/course-tests` | admin | Создание связи |
-| DELETE | `/api/v1/course-tests/{courseTestID}` | admin | Основной путь удаления; старый query-param вариант оставлен как compatibility |
-
-`DELETE /course-tests` работает так:
+Backend:
 
 ```text
-DELETE /api/v1/course-tests/{courseTestID}
-DELETE /api/v1/course-tests?course_id=...&quiz_id=...
-DELETE /api/v1/course-tests?module_id=...&quiz_id=...
+http://127.0.0.1:9000
 ```
 
-### 4.12 Reviews
+Frontend Vite:
 
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| GET | `/api/v1/reviews` | auth | Список отзывов |
-| POST | `/api/v1/reviews` | auth | Создать отзыв |
-| GET | `/api/v1/reviews/{reviewID}` | auth | Карточка отзыва |
-| POST | `/api/v1/reviews/{reviewID}/moderate` | admin | Модерация |
+```text
+http://localhost:4041
+```
 
-### 4.13 Notifications
+Рекомендуемый `.env` backend:
 
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| GET | `/api/v1/notifications` | auth | Список уведомлений |
-| GET | `/api/v1/notifications/{notificationID}` | auth | Карточка уведомления |
-| POST | `/api/v1/notifications/{notificationID}/read` | auth | Отметить прочитанным |
-| POST | `/api/v1/notifications` | admin | Создание уведомления |
+```env
+HTTP_ADDRESS=127.0.0.1:9000
+HTTP_CORS_ALLOWED_ORIGINS=http://localhost:4041
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5433/lms_arvand?sslmode=disable
+MIGRATE_RUN_ON_START=true
+SEED_RUN_ON_START=true
+AUTH_LOGIN_LOCKOUT_ENABLED=false
+AUTH_PASSWORD_RESET_RETURN_TOKEN=true
+```
 
-### 4.14 Webhooks
+Рекомендуемый `.env` frontend:
 
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| GET | `/api/v1/webhooks` | admin | Список webhooks |
-| POST | `/api/v1/webhooks` | admin | Создание webhook |
-| GET | `/api/v1/webhooks/{webhookID}` | admin | Карточка webhook |
-| PUT | `/api/v1/webhooks/{webhookID}` | admin | Обновление webhook |
-| DELETE | `/api/v1/webhooks/{webhookID}` | admin | Удаление webhook |
+```env
+VITE_API_URL=http://localhost:9000/api/v1
+```
 
-### 4.15 Audit logs
+Если frontend настроен через proxy или nginx, можно использовать:
 
-| Method | Path | Access | Notes |
-| --- | --- | --- | --- |
-| GET | `/api/v1/audit-logs` | admin | Список audit log |
-| GET | `/api/v1/audit-logs/{auditLogID}` | admin | Карточка audit log |
+```env
+VITE_API_URL=/api/v1
+```
 
-## 5. Схемы запросов, которые фронт должен знать
+## Вход
 
-### 5.1 Login
+Первый вход:
 
 ```json
 {
   "email": "admin@local.test",
-  "password": "secret"
+  "password": "Admin123!"
 }
 ```
 
-Ответ:
+Endpoint:
+
+```text
+POST /api/v1/auth/login
+```
+
+После входа сохранить `token` и отправлять:
+
+```http
+Authorization: Bearer <token>
+```
+
+`username` на frontend больше не использовать.
+
+## Google login
+
+Frontend сначала вызывает:
+
+```text
+GET /api/v1/auth/google/config
+```
+
+Если ответ:
 
 ```json
 {
-  "token": "session-token",
-  "expires_at": "2026-05-01T12:00:00Z",
-  "user": { }
+  "enabled": true,
+  "client_id": "....apps.googleusercontent.com"
 }
 ```
 
-### 5.2 Google login
+то показывать кнопку Google и использовать `client_id` для Google SDK.
+
+После Google SDK отправить:
+
+```text
+POST /api/v1/auth/google
+```
 
 ```json
 {
@@ -226,219 +96,186 @@ DELETE /api/v1/course-tests?module_id=...&quiz_id=...
 }
 ```
 
-Ответ тот же, что у `POST /auth/login`.
+## Профиль
 
-### 5.3 Submit attempt
+Текущий пользователь:
+
+```text
+GET /api/v1/auth/me
+```
+
+Редактировать свой профиль:
+
+```text
+PUT /api/v1/auth/me
+```
 
 ```json
 {
-  "user_id": "optional-for-admin",
-  "started_at": "2026-05-01T10:00:00Z",
-  "answers": [
-    {
-      "question_id": "uuid",
-      "selected_option_ids": ["uuid"]
-    }
-  ]
+  "first_name": "Ali",
+  "last_name": "Karimov",
+  "phone": "900000000",
+  "is_male": true,
+  "city": "Худжанд",
+  "birth_date": "2001-07-12"
 }
 ```
 
-Правило:
-- обычный пользователь не может подставить чужой `user_id`
-- admin может передать `user_id`
-- если `user_id` не передан, backend использует текущего пользователя
+## Роли на frontend
 
-### 5.4 Review attempt
+Использовать:
 
-```json
-{
-  "passed": true,
-  "comment": "Хороший ответ, но не полный"
-}
-```
+- `user.is_admin === true` - админские экраны контента.
+- `user.is_super_admin === true` - управление пользователями.
 
-### 5.5 Create enrollment
+Не использовать:
 
-```json
-{
-  "course_id": "uuid",
-  "user_id": "uuid"
-}
-```
-
-### 5.6 Complete enrollment
-
-```json
-{}
-```
-
-Сертификат создаётся автоматически, если условия выполнены.
-
-### 5.7 Create review
-
-```json
-{
-  "course_id": "uuid",
-  "user_id": "optional",
-  "rating": 5,
-  "text": "Очень полезный курс"
-}
-```
-
-### 5.8 Moderate review
-
-```json
-{
-  "id": "uuid",
-  "status": "approved"
-}
-```
-
-### 5.9 Create webhook
-
-```json
-{
-  "name": "CRM",
-  "url": "https://example.com/webhook",
-  "events": ["course.created", "attempt.finished"],
-  "secret": "shared-secret",
-  "status": "active"
-}
-```
-
-Важно:
-- `secret` возвращается только в ответе на создание
-- в `GET`/`PUT` секрет больше не должен показываться полностью
-
-### 5.10 Create notification
-
-```json
-{
-  "user_id": "uuid",
-  "type": "system",
-  "title": { "ru": "Заголовок", "tj": "Сарлавҳа" },
-  "body": { "ru": "Текст", "tj": "Матн" },
-  "link": "https://..."
-}
-```
-
-## 6. Основные фильтры list endpoint-ов
-
-### Users
-
-- `search`
 - `role`
+- `username`
+- `admin_info`
 - `is_active`
-- `limit`
-- `offset`
 
-### Courses
+## Списки
 
-- `search`
-- `status`
-- `category`
-- `platform`
-- `limit`
-- `offset`
-
-### Quizzes
-
-- `search`
-- `status`
-- `category`
-- `platform`
-- `limit`
-- `offset`
-
-### Attempts
-
-- `quiz_id`
-- `user_id`
-- `limit`
-- `offset`
-
-### Enrollments
-
-- `course_id`
-- `user_id`
-- `status`
-- `limit`
-- `offset`
-
-### Certificates
-
-- `user_id`
-- `course_id`
-- `enrollment_id`
-- `limit`
-- `offset`
-
-### Course modules
-
-- `course_id`
-
-### Content blocks
-
-- `course_id`
-- `module_id`
-
-### Reviews
-
-- `course_id`
-- `user_id`
-- `status`
-- `limit`
-- `offset`
-
-### Notifications
-
-- `user_id`
-- `type`
-- `read`
-- `limit`
-- `offset`
-
-### Webhooks
-
-- `status`
-- `limit`
-- `offset`
-
-## 7. Что фронту важно помнить
-
-- `POST /api/v1/uploads` реализован через admin API
-- `POST /audit-logs` больше нет
-- `GET /webhooks` и `GET /webhooks/{id}` не должны светить полный secret
-- `DELETE /course-tests` использует query params
-- `GET /content-blocks` обычно вызывается с `course_id` или `module_id`
-- `GET /attempts`, `GET /enrollments`, `GET /certificates`, `GET /notifications` для non-admin всегда ограничиваются текущим пользователем
-- `POST /attempts/{attemptID}/review` только для admin; при `scores[]` backend пересчитывает итоговые баллы
-- `POST /enrollments/{enrollmentID}/complete` только для admin
-- `POST /certificates` можно использовать как ручной override, но основной flow должен идти через complete
-
-## 8. Текущий контракт списков
-
-Сейчас list endpoint-ы возвращают массив напрямую:
+Большинство списков приходит так:
 
 ```json
-[
-  {
-    "id": "uuid"
-  }
-]
+{
+  "data": [],
+  "total": 15,
+  "limit": 20,
+  "offset": 0
+}
 ```
 
-То есть:
-- `data` envelope нет
-- `total` envelope нет
-- `has_more` envelope нет
-- фронт должен сам управлять пагинацией через `limit` и `offset`
+Читать элементы нужно из `data`.
 
-## 9. Что считать стабильным поведением backend
+## Ошибки
 
-- login работает через session token
-- Google login возвращает тот же `LoginResult`
-- `auth/me` возвращает текущего пользователя и session
-- сертификат можно проверить по `verifyHash`
-- попытки с `needs_review=true` можно добрать через admin review endpoint, включая manual scoring для open-ended вопросов
-- сертификат выдаётся автоматически при `enrollment complete`, если условия выполнены
+Если пришло:
+
+```json
+{
+  "field": "passing_points",
+  "code": "too_high",
+  "message": "Баллы для прохождения не могут быть больше максимального балла теста (10.00)"
+}
+```
+
+Нужно показать message и подсветить input `passing_points` / `passingPoints`.
+
+Если пришло:
+
+```json
+{
+  "error": "conflict",
+  "message": "Лимит попыток исчерпан. Повторная сдача будет доступна после 05.06.2026."
+}
+```
+
+Показать `message` как общую ошибку.
+
+## Курсы и тесты
+
+Курс может иметь `video_url` и `quiz_id`.
+
+Тест создаётся с:
+
+```json
+{
+  "passingPoints": 8,
+  "maxAttempts": 3,
+  "retakeCooldownDays": 30,
+  "questions": []
+}
+```
+
+Backend сам считает максимум баллов по вопросам:
+
+- 5 вопросов по 1 баллу -> максимум 5;
+- 10 вопросов по 1 баллу -> максимум 10;
+- вопросы 2 + 3 + 5 -> максимум 10.
+
+`passingPoints` нельзя ставить больше максимума.
+
+## Правильные ответы
+
+Backend не отдаёт правильные ответы на frontend.
+
+В `GET /quizzes/{id}` скрыты:
+
+- `is_correct`
+- `isCorrect`
+- `correct`
+- `accepted_answers`
+- `acceptedAnswers`
+- другие answer keys.
+
+Admin при создании теста может отправлять эти поля, но студент при чтении теста их не получает.
+
+## Попытки и сертификаты
+
+Submit:
+
+```text
+POST /api/v1/quizzes/{quizID}/attempts
+```
+
+Сертификат выдаётся, если:
+
+- попытка `passed=true`;
+- `total_earned >= passing_points`;
+- тест связан с курсом;
+- сертификат ещё не выдавался.
+
+После получения сертификата:
+
+- видео остаётся доступным;
+- повторная сдача теста закрывается.
+
+Если попытки закончились:
+
+- backend возвращает `409 conflict`;
+- в message будет дата, когда можно сдавать снова.
+
+## Uploads
+
+Загрузка только admin:
+
+```text
+POST /api/v1/uploads
+```
+
+`multipart/form-data`:
+
+- `file`
+- `type=image|video|file|avatar`
+
+Ответ:
+
+```json
+{
+  "url": "/uploads/...",
+  "filename": "file.png",
+  "size_bytes": 12345
+}
+```
+
+Этот `url` можно сохранять в `cover_image_url`, `video_url`, `avatar_url` или content block payload.
+
+## Что обязательно проверить с frontend
+
+1. Login по email/password.
+2. `auth/me` после refresh страницы.
+3. Создание курса с video_url.
+4. Список курсов после создания/удаления.
+5. Создание теста с вопросами.
+6. Ошибка, если `passingPoints` больше суммы баллов вопросов.
+7. Сдача теста ниже проходного балла.
+8. Сдача теста выше проходного балла.
+9. Получение сертификата.
+10. Запрет повторной сдачи после сертификата.
+11. Блокировка попыток до cooldown.
+12. Редактирование профиля и `birth_date`.
+13. Сброс пароля.
+14. Google login, если есть `GOOGLE_CLIENT_ID`.

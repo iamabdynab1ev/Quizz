@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	nethttp "net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"lms-arvand-backend/internal/domain"
+	"lms-arvand-backend/internal/handler/http/middleware"
 	"lms-arvand-backend/internal/usecase"
 )
 
@@ -111,6 +113,12 @@ func (routerCertificateUseCaseStub) List(context.Context, domain.CertificateList
 	return nil, 0, nil
 }
 
+type routerDenyAuthenticator struct{}
+
+func (routerDenyAuthenticator) Authenticate(context.Context, string) (domain.AuthIdentity, error) {
+	return domain.AuthIdentity{}, errors.New("auth must not be called for public catalog routes")
+}
+
 func TestRouterPublicCatalogRoutesDoNotRequireAuth(t *testing.T) {
 	t.Parallel()
 
@@ -119,7 +127,7 @@ func TestRouterPublicCatalogRoutesDoNotRequireAuth(t *testing.T) {
 		logger,
 		NewHealthHandler(logger, routerHealthStub{}),
 		nil,
-		nil,
+		middleware.Authenticator(routerDenyAuthenticator{}),
 		nil,
 		NewCoursesHandler(logger, routerCourseUseCaseStub{}),
 		NewQuizzesHandler(logger, routerQuizUseCaseStub{}),

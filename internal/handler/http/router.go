@@ -99,11 +99,10 @@ func NewRouter(
 			}
 
 			if coursesHandler != nil {
-				protected.Route("/courses", func(courses chi.Router) {
-					courses.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/", coursesHandler.CreateCourse)
-					courses.With(middleware.RequireRoles(domain.UserRoleAdmin)).Put("/{courseID}", coursesHandler.UpdateCourse)
-					courses.With(middleware.RequireRoles(domain.UserRoleAdmin)).Delete("/{courseID}", coursesHandler.ArchiveCourse)
-				})
+				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/courses", coursesHandler.CreateCourse)
+				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/courses/", coursesHandler.CreateCourse)
+				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Put("/courses/{courseID}", coursesHandler.UpdateCourse)
+				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Delete("/courses/{courseID}", coursesHandler.ArchiveCourse)
 			}
 
 			if coursePackagesHandler != nil {
@@ -112,16 +111,16 @@ func NewRouter(
 			}
 
 			if quizzesHandler != nil {
-				protected.Route("/quizzes", func(quizzes chi.Router) {
-					quizzes.Get("/", quizzesHandler.ListQuizzes)
-					quizzes.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/", quizzesHandler.CreateQuiz)
-					quizzes.With(middleware.RequireRoles(domain.UserRoleAdmin)).Put("/{quizID}", quizzesHandler.UpdateQuiz)
-					quizzes.With(middleware.RequireRoles(domain.UserRoleAdmin)).Delete("/{quizID}", quizzesHandler.ArchiveQuiz)
+				protected.Get("/quizzes", quizzesHandler.ListQuizzes)
+				protected.Get("/quizzes/", quizzesHandler.ListQuizzes)
+				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/quizzes", quizzesHandler.CreateQuiz)
+				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/quizzes/", quizzesHandler.CreateQuiz)
+				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Put("/quizzes/{quizID}", quizzesHandler.UpdateQuiz)
+				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Delete("/quizzes/{quizID}", quizzesHandler.ArchiveQuiz)
 
-					if attemptsHandler != nil {
-						quizzes.Post("/{quizID}/attempts", attemptsHandler.SubmitAttempt)
-					}
-				})
+				if attemptsHandler != nil {
+					protected.Post("/quizzes/{quizID}/attempts", attemptsHandler.SubmitAttempt)
+				}
 			}
 
 			if attemptsHandler != nil {
@@ -142,10 +141,10 @@ func NewRouter(
 			}
 
 			if certificatesHandler != nil {
-				protected.Route("/certificates", func(certificates chi.Router) {
-					certificates.Get("/", certificatesHandler.ListCertificates)
-					certificates.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/", certificatesHandler.CreateCertificate)
-				})
+				protected.Get("/certificates", certificatesHandler.ListCertificates)
+				protected.Get("/certificates/", certificatesHandler.ListCertificates)
+				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/certificates", certificatesHandler.CreateCertificate)
+				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/certificates/", certificatesHandler.CreateCertificate)
 			}
 
 			if courseModulesHandler != nil {

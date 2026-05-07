@@ -299,6 +299,8 @@ Protected. Response `204`.
 
 ### GET `/courses`
 
+Public. Токен не нужен: frontend может показывать каталог до входа пользователя.
+
 Query:
 
 - `search`
@@ -326,6 +328,12 @@ Response item:
 ```
 
 Скрыты: `status`, `platforms`, `certificate_enabled`, `certificate_passing_score`, `reviews_enabled`.
+
+### GET `/courses/{courseID}`
+
+Public. Токен не нужен: frontend может открыть детальную страницу курса до входа пользователя.
+
+Response такой же, как item в `GET /courses`.
 
 ### POST `/courses`
 
@@ -356,6 +364,8 @@ Admin. Это archive, не hard delete. После удаления курс н
 
 ### GET `/quizzes`
 
+Protected. Этот список используется для админских/личных экранов. Для публичной страницы курса использовать `quiz_id` из курса и потом `GET /quizzes/{quizID}`.
+
 Response item:
 
 ```json
@@ -377,6 +387,8 @@ Response item:
 ```
 
 ### GET `/quizzes/{quizID}`
+
+Public. Токен не нужен: frontend может показать тест до авторизации. Авторизация нужна только при отправке попытки.
 
 Возвращает quiz + `questions`.
 
@@ -609,7 +621,13 @@ Query:
 
 ### GET `/certificates/{certificateID}`
 
-Protected.
+Public. Токен не нужен: можно открыть сертификат по прямой ссылке.
+
+Также поддерживается совместимый singular route:
+
+```text
+GET /certificate/{certificateID}
+```
 
 ### GET `/certificates/verify/{verifyHash}`
 
@@ -799,8 +817,8 @@ Admin only:
 
 ## Access summary
 
-- Public: health, register, login, Google config/login, forgot/reset password, certificate verify, uploads files.
-- Auth user: profile, courses, quizzes, attempts, enrollments, certificates, reviews, notifications.
+- Public: health, register, login, Google config/login, forgot/reset password, courses list/detail, quiz detail, certificate by id/verify, uploads files.
+- Auth user: profile, quizzes list, attempt submit, attempts, enrollments, own certificates list, reviews, notifications.
 - Admin: content management, tests, attempts review, completion, certificates override, uploads, webhooks, audit logs.
 - Super admin: users management.
 

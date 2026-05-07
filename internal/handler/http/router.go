@@ -64,6 +64,18 @@ func NewRouter(
 
 		if certificatesHandler != nil {
 			api.Get("/certificates/verify/{verifyHash}", certificatesHandler.VerifyCertificate)
+			api.Get("/certificates/{certificateID}", certificatesHandler.GetPublicCertificateByID)
+			api.Get("/certificate/{certificateID}", certificatesHandler.GetPublicCertificateByID)
+		}
+
+		if coursesHandler != nil {
+			api.Get("/courses", coursesHandler.ListCourses)
+			api.Get("/courses/", coursesHandler.ListCourses)
+			api.Get("/courses/{courseID}", coursesHandler.GetCourseByID)
+		}
+
+		if quizzesHandler != nil {
+			api.Get("/quizzes/{quizID}", quizzesHandler.GetQuizByID)
 		}
 
 		if authenticator == nil {
@@ -88,8 +100,6 @@ func NewRouter(
 
 			if coursesHandler != nil {
 				protected.Route("/courses", func(courses chi.Router) {
-					courses.Get("/", coursesHandler.ListCourses)
-					courses.Get("/{courseID}", coursesHandler.GetCourseByID)
 					courses.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/", coursesHandler.CreateCourse)
 					courses.With(middleware.RequireRoles(domain.UserRoleAdmin)).Put("/{courseID}", coursesHandler.UpdateCourse)
 					courses.With(middleware.RequireRoles(domain.UserRoleAdmin)).Delete("/{courseID}", coursesHandler.ArchiveCourse)
@@ -104,7 +114,6 @@ func NewRouter(
 			if quizzesHandler != nil {
 				protected.Route("/quizzes", func(quizzes chi.Router) {
 					quizzes.Get("/", quizzesHandler.ListQuizzes)
-					quizzes.Get("/{quizID}", quizzesHandler.GetQuizByID)
 					quizzes.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/", quizzesHandler.CreateQuiz)
 					quizzes.With(middleware.RequireRoles(domain.UserRoleAdmin)).Put("/{quizID}", quizzesHandler.UpdateQuiz)
 					quizzes.With(middleware.RequireRoles(domain.UserRoleAdmin)).Delete("/{quizID}", quizzesHandler.ArchiveQuiz)
@@ -135,7 +144,6 @@ func NewRouter(
 			if certificatesHandler != nil {
 				protected.Route("/certificates", func(certificates chi.Router) {
 					certificates.Get("/", certificatesHandler.ListCertificates)
-					certificates.Get("/{certificateID}", certificatesHandler.GetCertificateByID)
 					certificates.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/", certificatesHandler.CreateCertificate)
 				})
 			}

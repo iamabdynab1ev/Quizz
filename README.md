@@ -37,6 +37,7 @@ go vet ./...
 - Uploads: `/uploads/*`
 - Auth: opaque session token через `Authorization: Bearer <token>`
 - Login: email/password или Google ID token
+- Публично без токена: `GET /api/v1/courses`, `GET /api/v1/courses/{id}`, `GET /api/v1/quizzes/{id}`, `GET /api/v1/certificates/{id}`
 - Первый admin берётся из `.env`: `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`
 - Только bootstrap user получает `is_super_admin=true`
 - Frontend должен использовать `is_admin`, а не `role`

@@ -65,6 +65,24 @@ Authorization: Bearer <token>
 
 `username` на frontend больше не использовать.
 
+## Публичный каталог
+
+Эти запросы работают без токена:
+
+```text
+GET /api/v1/courses
+GET /api/v1/courses/{courseID}
+GET /api/v1/quizzes/{quizID}
+GET /api/v1/certificates/{certificateID}
+GET /api/v1/certificate/{certificateID}
+```
+
+Логика frontend:
+
+- каталог курсов, детальная страница курса, видео и детальный тест можно открыть до входа;
+- когда пользователь нажимает "Пройти тест" и отправляет ответы, тогда требуется авторизация;
+- если токена нет, показать login/register и после входа повторить submit.
+
 ## Google login
 
 Frontend сначала вызывает:
@@ -220,6 +238,8 @@ Submit:
 ```text
 POST /api/v1/quizzes/{quizID}/attempts
 ```
+
+Этот запрос protected. Нужен `Authorization: Bearer <token>`.
 
 Сертификат выдаётся, если:
 

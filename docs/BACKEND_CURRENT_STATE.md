@@ -448,7 +448,12 @@ Public:
 - `POST /api/v1/auth/google`
 - `POST /api/v1/auth/password/forgot`
 - `POST /api/v1/auth/password/reset`
+- `GET /api/v1/courses`
+- `GET /api/v1/courses/{courseID}`
+- `GET /api/v1/quizzes/{quizID}`
 - `GET /api/v1/certificates/verify/{verifyHash}`
+- `GET /api/v1/certificates/{certificateID}`
+- `GET /api/v1/certificate/{certificateID}`
 - `GET /uploads/*`
 
 Protected:
@@ -459,10 +464,7 @@ Protected:
 - `POST /api/v1/auth/logout`
 - `GET /api/v1/dashboard`
 - `GET /api/v1/dashboard/me`
-- `GET /api/v1/courses`
-- `GET /api/v1/courses/{courseID}`
 - `GET /api/v1/quizzes`
-- `GET /api/v1/quizzes/{quizID}`
 - `POST /api/v1/quizzes/{quizID}/attempts`
 - `GET /api/v1/attempts`
 - `GET /api/v1/attempts/{attemptID}`
@@ -470,7 +472,6 @@ Protected:
 - `POST /api/v1/enrollments`
 - `GET /api/v1/enrollments/{enrollmentID}`
 - `GET /api/v1/certificates`
-- `GET /api/v1/certificates/{certificateID}`
 - `GET /api/v1/course-modules`
 - `GET /api/v1/course-modules/{moduleID}`
 - `GET /api/v1/content-blocks`

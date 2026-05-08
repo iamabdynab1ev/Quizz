@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -27,25 +26,24 @@ func NewAttemptRepository(pool *pgxpool.Pool) *AttemptRepository {
 	return &AttemptRepository{pool: pool}
 }
 
-func (r *AttemptRepository) GetQuizForAttempt(ctx context.Context, quizID string) (domain.Quiz, error) {
-	quizRepository := NewQuizRepository(r.pool)
-	quiz, err := quizRepository.GetByID(ctx, quizID)
+func (r *AttemptRepository) GetCourseForAttempt(ctx context.Context, courseID string) (domain.Course, error) {
+	courseRepository := NewCourseRepository(r.pool)
+	course, err := courseRepository.GetByID(ctx, courseID)
 	if err != nil {
-		return domain.Quiz{}, fmt.Errorf("repository postgres attempts get quiz for attempt: %w", err)
+		return domain.Course{}, fmt.Errorf("repository postgres attempts get course for attempt: %w", err)
 	}
-
-	return quiz, nil
+	return course, nil
 }
 
-func (r *AttemptRepository) GetUserQuizAttemptWindow(ctx context.Context, quizID, userID string, since *time.Time) (domain.AttemptWindow, error) {
+func (r *AttemptRepository) GetUserCourseAttemptWindow(ctx context.Context, courseID, userID string, since *time.Time) (domain.AttemptWindow, error) {
 	query := strings.Builder{}
 	query.WriteString(`
 		SELECT COUNT(*), MIN(started_at)
 		FROM attempts
-		WHERE quiz_id = $1 AND user_id = $2
+		WHERE course_id = $1 AND user_id = $2
 	`)
 
-	args := []any{quizID, userID}
+	args := []any{courseID, userID}
 	if since != nil {
 		query.WriteString(" AND started_at > $3")
 		args = append(args, *since)
@@ -54,7 +52,7 @@ func (r *AttemptRepository) GetUserQuizAttemptWindow(ctx context.Context, quizID
 	var count int
 	var earliestStartedAt sql.NullTime
 	if err := r.pool.QueryRow(ctx, query.String(), args...).Scan(&count, &earliestStartedAt); err != nil {
-		return domain.AttemptWindow{}, fmt.Errorf("repository postgres attempts get user quiz attempt window: %w", err)
+		return domain.AttemptWindow{}, fmt.Errorf("repository postgres attempts get user course attempt window: %w", err)
 	}
 
 	return domain.AttemptWindow{
@@ -74,7 +72,6 @@ func (r *AttemptRepository) UserHasCourseCertificate(ctx context.Context, course
 	`, courseID, userID).Scan(&exists); err != nil {
 		return false, fmt.Errorf("repository postgres attempts user has course certificate: %w", err)
 	}
-
 	return exists, nil
 }
 
@@ -82,33 +79,17 @@ func (r *AttemptRepository) CreateAttempt(ctx context.Context, params domain.Cre
 	var attemptID string
 	if err := r.pool.QueryRow(ctx, `
 		INSERT INTO attempts (
-			quiz_id,
-			user_id,
-			started_at,
-			finished_at,
-			questions_snapshot,
-			answers_data,
-			total_earned,
-			total_max,
-			score_percent,
-			passed,
-			needs_review
+			course_id, user_id, started_at, finished_at,
+			questions_snapshot, answers_data,
+			total_earned, total_max, score_percent, passed
 		) VALUES (
-			$1,
-			$2,
-			$3,
-			$4,
-			$5::jsonb,
-			$6::jsonb,
-			$7,
-			$8,
-			$9,
-			$10,
-			$11
+			$1, $2, $3, $4,
+			$5::jsonb, $6::jsonb,
+			$7, $8, $9, $10
 		)
 		RETURNING id
 	`,
-		params.QuizID,
+		params.CourseID,
 		params.UserID,
 		params.StartedAt,
 		params.FinishedAt,
@@ -118,7 +99,6 @@ func (r *AttemptRepository) CreateAttempt(ctx context.Context, params domain.Cre
 		params.TotalMax,
 		params.ScorePercent,
 		params.Passed,
-		params.NeedsReview,
 	).Scan(&attemptID); err != nil {
 		return domain.Attempt{}, wrapPGError("repository postgres attempts create", err)
 	}
@@ -134,23 +114,9 @@ func (r *AttemptRepository) CreateAttempt(ctx context.Context, params domain.Cre
 func (r *AttemptRepository) GetAttemptByID(ctx context.Context, attemptID string) (domain.Attempt, error) {
 	attempt, err := scanAttemptRow(r.pool.QueryRow(ctx, `
 		SELECT
-			id,
-			quiz_id,
-			user_id,
-			started_at,
-			finished_at,
-			questions_snapshot,
-			answers_data,
-			total_earned,
-			total_max,
-			score_percent,
-			passed,
-			needs_review,
-			reviewed_at,
-			reviewer_id::text,
-			review_comment,
-			manual_passed,
-			review_scores
+			id, course_id, user_id, started_at, finished_at,
+			questions_snapshot, answers_data,
+			total_earned, total_max, score_percent, passed
 		FROM attempts
 		WHERE id = $1
 	`, attemptID))
@@ -158,10 +124,8 @@ func (r *AttemptRepository) GetAttemptByID(ctx context.Context, attemptID string
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.Attempt{}, fmt.Errorf("repository postgres attempts get by id: %w", domain.ErrNotFound)
 		}
-
 		return domain.Attempt{}, fmt.Errorf("repository postgres attempts get by id: %w", err)
 	}
-
 	return attempt, nil
 }
 
@@ -171,40 +135,22 @@ func (r *AttemptRepository) ListAttempts(ctx context.Context, filter domain.Atte
 		if includePagination {
 			query.WriteString(`
 				SELECT
-					id,
-					quiz_id,
-					user_id,
-					started_at,
-					finished_at,
-					questions_snapshot,
-					answers_data,
-					total_earned,
-					total_max,
-					score_percent,
-					passed,
-					needs_review,
-					reviewed_at,
-					reviewer_id::text,
-					review_comment,
-					manual_passed,
-					review_scores
+					id, course_id, user_id, started_at, finished_at,
+					questions_snapshot, answers_data,
+					total_earned, total_max, score_percent, passed
 				FROM attempts
 				WHERE 1 = 1
 			`)
 		} else {
-			query.WriteString(`
-				SELECT COUNT(*)
-				FROM attempts
-				WHERE 1 = 1
-			`)
+			query.WriteString(`SELECT COUNT(*) FROM attempts WHERE 1 = 1`)
 		}
 
 		args := make([]any, 0, 4)
 		position := 1
 
-		if filter.QuizID != nil {
-			query.WriteString(fmt.Sprintf(" AND quiz_id = $%d", position))
-			args = append(args, *filter.QuizID)
+		if filter.CourseID != nil {
+			query.WriteString(fmt.Sprintf(" AND course_id = $%d", position))
+			args = append(args, *filter.CourseID)
 			position++
 		}
 
@@ -241,7 +187,6 @@ func (r *AttemptRepository) ListAttempts(ctx context.Context, filter domain.Atte
 		if err != nil {
 			return nil, 0, fmt.Errorf("repository postgres attempts list scan: %w", err)
 		}
-
 		attempts = append(attempts, attempt)
 	}
 
@@ -252,64 +197,14 @@ func (r *AttemptRepository) ListAttempts(ctx context.Context, filter domain.Atte
 	return attempts, total, nil
 }
 
-func (r *AttemptRepository) UpdateReview(ctx context.Context, params domain.ReviewAttemptParams) (domain.Attempt, error) {
-	attempt, err := scanAttemptRow(r.pool.QueryRow(ctx, `
-		UPDATE attempts
-		SET
-			passed = $2,
-			needs_review = false,
-			reviewed_at = NOW(),
-			reviewer_id = $3::uuid,
-			review_comment = $4,
-			manual_passed = $2,
-			total_earned = $5,
-			score_percent = $6,
-			review_scores = $7::jsonb
-		WHERE id = $1
-			AND needs_review = true
-		RETURNING
-			id,
-			quiz_id,
-			user_id,
-			started_at,
-			finished_at,
-			questions_snapshot,
-			answers_data,
-			total_earned,
-			total_max,
-			score_percent,
-			passed,
-			needs_review,
-			reviewed_at,
-			reviewer_id::text,
-			review_comment,
-			manual_passed,
-			review_scores
-	`, params.AttemptID, params.Passed, params.ReviewerID, nullableStringPointerForWrite(params.Comment), params.TotalEarned, params.ScorePercent, []byte(params.ReviewScores)))
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.Attempt{}, fmt.Errorf("repository postgres attempts update review: %w", domain.ErrNotFound)
-		}
-
-		return domain.Attempt{}, fmt.Errorf("repository postgres attempts update review: %w", err)
-	}
-
-	return attempt, nil
-}
-
 func scanAttemptRow(scanner attemptRowScanner) (domain.Attempt, error) {
 	var attempt domain.Attempt
 	var userID sql.NullString
 	var finishedAt sql.NullTime
-	var reviewedAt sql.NullTime
-	var reviewerID sql.NullString
-	var reviewComment sql.NullString
-	var manualPassed sql.NullBool
-	var reviewScores json.RawMessage
 
 	if err := scanner.Scan(
 		&attempt.ID,
-		&attempt.QuizID,
+		&attempt.CourseID,
 		&userID,
 		&attempt.StartedAt,
 		&finishedAt,
@@ -319,27 +214,12 @@ func scanAttemptRow(scanner attemptRowScanner) (domain.Attempt, error) {
 		&attempt.TotalMax,
 		&attempt.ScorePercent,
 		&attempt.Passed,
-		&attempt.NeedsReview,
-		&reviewedAt,
-		&reviewerID,
-		&reviewComment,
-		&manualPassed,
-		&reviewScores,
 	); err != nil {
 		return domain.Attempt{}, err
 	}
 
 	attempt.UserID = optionalString(userID)
 	attempt.FinishedAt = optionalTime(finishedAt)
-	attempt.ReviewedAt = optionalTime(reviewedAt)
-	attempt.ReviewerID = optionalString(reviewerID)
-	attempt.ReviewComment = optionalString(reviewComment)
-	attempt.ManualPassed = optionalBool(manualPassed)
-	if len(reviewScores) > 0 {
-		if err := json.Unmarshal(reviewScores, &attempt.ReviewScores); err != nil {
-			return domain.Attempt{}, fmt.Errorf("scan attempt review scores: %w", err)
-		}
-	}
 
 	return attempt, nil
 }

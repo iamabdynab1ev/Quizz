@@ -38,8 +38,8 @@ func TestAdminSeederSeedCreatesMissingAdmin(t *testing.T) {
 		stubAdminLookup{err: domain.ErrNotFound},
 		stubAdminWriter{
 			createFn: func(ctx context.Context, params domain.CreateUserParams) (domain.User, error) {
-				if params.Role != domain.UserRoleAdmin {
-					t.Fatalf("Create() role = %q, want %q", params.Role, domain.UserRoleAdmin)
+				if !params.IsAdmin {
+					t.Fatal("Create() is_admin = false, want true")
 				}
 				if !params.IsSuperAdmin {
 					t.Fatal("Create() is_super_admin = false, want true")
@@ -80,10 +80,9 @@ func TestAdminSeederSeedUpdatesExistingAdmin(t *testing.T) {
 		stubAdminLookup{
 			user: domain.User{
 				ID:        "admin-id",
-				Role:      domain.UserRoleAdmin,
+				IsAdmin:   true,
 				FirstName: "Old",
 				LastName:  "Admin",
-				Gender:    domain.GenderUnspecified,
 			},
 		},
 		stubAdminWriter{
@@ -96,8 +95,8 @@ func TestAdminSeederSeedUpdatesExistingAdmin(t *testing.T) {
 					t.Fatalf("Update() id = %q, want %q", params.ID, "admin-id")
 				}
 
-				if params.Role != domain.UserRoleAdmin {
-					t.Fatalf("Update() role = %q, want %q", params.Role, domain.UserRoleAdmin)
+				if !params.IsAdmin {
+					t.Fatal("Update() is_admin = false, want true")
 				}
 				if params.IsSuperAdmin == nil || !*params.IsSuperAdmin {
 					t.Fatal("Update() is_super_admin is not true")

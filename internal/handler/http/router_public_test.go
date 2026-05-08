@@ -54,18 +54,19 @@ func (routerCourseUseCaseStub) Archive(context.Context, string) error {
 	return nil
 }
 
+// routerQuizUseCaseStub satisfies the quizUseCase interface (backed by courses).
 type routerQuizUseCaseStub struct{}
 
-func (routerQuizUseCaseStub) Create(context.Context, domain.CreateQuizParams) (domain.Quiz, error) {
-	return domain.Quiz{}, nil
+func (routerQuizUseCaseStub) Create(context.Context, domain.CreateCourseParams) (domain.Course, error) {
+	return domain.Course{}, nil
 }
 
-func (routerQuizUseCaseStub) GetByID(context.Context, string) (domain.Quiz, error) {
-	return domain.Quiz{
+func (routerQuizUseCaseStub) GetByID(context.Context, string) (domain.Course, error) {
+	return domain.Course{
 		ID:                 "quiz-1",
 		Title:              domain.MultiLangText{RU: "Quiz", TJ: "Quiz"},
 		Description:        domain.MultiLangText{RU: "Description", TJ: "Description"},
-		PassingPoints:      8,
+		QuizPassPercent:    80,
 		MaxAttempts:        3,
 		RetakeCooldownDays: 30,
 		CreatedAt:          time.Now().UTC(),
@@ -73,12 +74,12 @@ func (routerQuizUseCaseStub) GetByID(context.Context, string) (domain.Quiz, erro
 	}, nil
 }
 
-func (routerQuizUseCaseStub) List(context.Context, domain.QuizListFilter) ([]domain.Quiz, int, error) {
+func (routerQuizUseCaseStub) List(context.Context, domain.CourseListFilter) ([]domain.Course, int, error) {
 	return nil, 0, nil
 }
 
-func (routerQuizUseCaseStub) Update(context.Context, domain.UpdateQuizParams) (domain.Quiz, error) {
-	return domain.Quiz{}, nil
+func (routerQuizUseCaseStub) Update(context.Context, domain.UpdateCourseParams) (domain.Course, error) {
+	return domain.Course{}, nil
 }
 
 func (routerQuizUseCaseStub) Archive(context.Context, string) error {
@@ -134,7 +135,6 @@ func TestRouterPublicCatalogRoutesDoNotRequireAuth(t *testing.T) {
 		nil,
 		nil,
 		NewCertificatesHandler(logger, routerCertificateUseCaseStub{}),
-		nil,
 		nil,
 		nil,
 		nil,

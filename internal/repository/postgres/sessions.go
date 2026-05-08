@@ -79,9 +79,6 @@ func (r *SessionRepository) GetByTokenWithUser(ctx context.Context, token string
 			`+userSelectColumns+`
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
-		LEFT JOIN user_employee_info emp ON emp.user_id = u.id
-		LEFT JOIN user_student_info stu ON stu.user_id = u.id
-		LEFT JOIN user_guest_info gst ON gst.user_id = u.id
 		WHERE s.token = $1
 	`, token)
 
@@ -151,25 +148,6 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 	var address sql.NullString
 	var city sql.NullString
 	var avatarURL sql.NullString
-	var role string
-	var gender string
-	var hasEmployeeInfo bool
-	var employeeBranch sql.NullString
-	var employeeOffice sql.NullString
-	var employeePosition sql.NullString
-	var employeeDepartment sql.NullString
-	var employeeID sql.NullString
-	var employeeHireDate sql.NullTime
-	var employeeNotes sql.NullString
-	var hasStudentInfo bool
-	var studentID sql.NullString
-	var studentGroupName sql.NullString
-	var studentEducationLevel sql.NullString
-	var studentBirthDate sql.NullTime
-	var hasGuestInfo bool
-	var guestSource sql.NullString
-	var guestInvitedBy sql.NullString
-	var guestExpiresAt sql.NullTime
 
 	if err := scanner.Scan(
 		&session.Token,
@@ -182,13 +160,13 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 		&email,
 		&googleID,
 		&passwordHash,
-		&role,
+		&user.IsAdmin,
 		&user.IsSuperAdmin,
 		&firstName,
 		&lastName,
 		&patronymic,
 		&phone,
-		&gender,
+		&user.IsMale,
 		&birthDate,
 		&address,
 		&city,
@@ -196,23 +174,6 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 		&user.IsActive,
 		&user.CreatedAt,
 		&user.UpdatedAt,
-		&hasEmployeeInfo,
-		&employeeBranch,
-		&employeeOffice,
-		&employeePosition,
-		&employeeDepartment,
-		&employeeID,
-		&employeeHireDate,
-		&employeeNotes,
-		&hasStudentInfo,
-		&studentID,
-		&studentGroupName,
-		&studentEducationLevel,
-		&studentBirthDate,
-		&hasGuestInfo,
-		&guestSource,
-		&guestInvitedBy,
-		&guestExpiresAt,
 	); err != nil {
 		return domain.AuthIdentity{}, err
 	}
@@ -220,45 +181,14 @@ func scanAuthIdentityRow(scanner sessionRowScanner) (domain.AuthIdentity, error)
 	user.Email = optionalString(email)
 	user.GoogleID = optionalString(googleID)
 	user.PasswordHash = optionalString(passwordHash)
-	user.Role = domain.UserRole(role)
 	user.FirstName = firstName.String
 	user.LastName = lastName.String
 	user.Patronymic = patronymic.String
 	user.Phone = optionalString(phone)
-	user.Gender = domain.Gender(gender)
 	user.BirthDate = optionalDateString(birthDate)
 	user.Address = optionalString(address)
 	user.City = optionalString(city)
 	user.AvatarURL = optionalString(avatarURL)
-
-	if hasEmployeeInfo {
-		user.EmployeeInfo = &domain.EmployeeInfo{
-			Branch:     employeeBranch.String,
-			Office:     employeeOffice.String,
-			Position:   employeePosition.String,
-			Department: employeeDepartment.String,
-			EmployeeID: employeeID.String,
-			HireDate:   dateString(employeeHireDate),
-			Notes:      employeeNotes.String,
-		}
-	}
-
-	if hasStudentInfo {
-		user.StudentInfo = &domain.StudentInfo{
-			StudentID:      studentID.String,
-			GroupName:      studentGroupName.String,
-			EducationLevel: studentEducationLevel.String,
-			BirthDate:      dateString(studentBirthDate),
-		}
-	}
-
-	if hasGuestInfo {
-		user.GuestInfo = &domain.GuestInfo{
-			Source:    guestSource.String,
-			InvitedBy: optionalString(guestInvitedBy),
-			ExpiresAt: optionalTime(guestExpiresAt),
-		}
-	}
 
 	session.IPAddress = optionalString(ipAddress)
 	session.UserAgent = optionalString(userAgent)

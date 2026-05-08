@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(go test *)",
+      "Bash(psql -U postgres -d arvand_lms -c \"\\\\d users\")",
+      "PowerShell(& \"C:\\\\Program Files\\\\PostgreSQL\\\\17\\\\bin\\\\psql.exe\" \"postgres://postgres:postgres@127.0.0.1:5433/lms_arvand?sslmode=disable\" -c \"\\\\d users\" 2>&1)",
+      "Read(//c/Program Files/PostgreSQL/**)",
+      "Bash(go run *)",
+      "Bash(curl -s http://localhost:9000/health)",
+      "Bash(Get-ChildItem -Path \"c:\\\\projects\\\\go\\\\src\\\\myApps\\\\quiz\" -Recurse -Filter \"*.go\")",
+      "Bash(go build *)",
+      "Bash(Get-ChildItem -Path \"c:\\\\projects\\\\go\\\\src\\\\myApps\\\\videocourses\\\\src\" -Recurse -Directory)",
+      "Bash(npx vite *)"
+    ],
+    "additionalDirectories": [
+      "c:\\projects\\go\\src\\myApps\\videocourses\\src\\components\\app",
+      "c:\\projects\\go\\src\\myApps\\videocourses\\src\\pages",
+      "c:\\projects\\go\\src\\myApps\\videocourses\\src\\components\\dashboard",
+      "c:\\projects\\go\\src\\myApps\\videocourses\\src"
+    ]
+  }
+}

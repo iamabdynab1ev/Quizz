@@ -60,7 +60,7 @@ func (u *UserUseCase) Create(ctx context.Context, params domain.CreateUserParams
 		u.audit.Log(ctx, domain.AppEventUserCreated, map[string]any{
 			"user_id":  user.ID,
 			"email":    user.Email,
-			"is_admin": user.Role == domain.UserRoleAdmin,
+			"is_admin": user.IsAdmin,
 		})
 	}
 
@@ -122,7 +122,7 @@ func (u *UserUseCase) Update(ctx context.Context, params domain.UpdateUserParams
 		u.audit.Log(ctx, domain.AppEventUserUpdated, map[string]any{
 			"user_id":  user.ID,
 			"email":    user.Email,
-			"is_admin": user.Role == domain.UserRoleAdmin,
+			"is_admin": user.IsAdmin,
 		})
 	}
 
@@ -171,37 +171,15 @@ func normalizeCreateUserParams(params domain.CreateUserParams) (domain.CreateUse
 		validation.add("password", "too_short", "Пароль должен быть минимум 8 символов")
 	}
 
-	if !params.Role.IsValid() {
-		validation.add("role", "invalid_enum", "Роль должна быть admin, employee, student или guest")
-	}
-	if params.IsSuperAdmin && params.Role != domain.UserRoleAdmin {
-		validation.add("is_super_admin", "forbidden_for_role", "Супер-админ должен иметь роль admin")
-	}
-
-	if params.Gender == "" {
-		params.Gender = domain.GenderUnspecified
-	}
-
-	if !params.Gender.IsValid() {
-		validation.add("gender", "invalid_enum", "Пол должен быть male, female, other или unspecified")
-	}
-
 	addDateValidation(&validation, "birth_date", params.BirthDate, "Дата рождения")
 
 	if err := validateEmail(params.Email); err != nil {
 		validation.add("email", "invalid_email", "Email указан неверно")
 	}
 
-	if err := validateRolePayloads(params.Role, params.EmployeeInfo, params.StudentInfo, params.GuestInfo); err != nil {
-		return domain.CreateUserParams{}, err
-	}
-	addStudentInfoDateValidation(&validation, params.StudentInfo)
-
 	if err := validation.err(); err != nil {
 		return domain.CreateUserParams{}, err
 	}
-
-	normalizeUserRoleDetails(&params)
 
 	return params, nil
 }
@@ -231,37 +209,15 @@ func normalizeUpdateUserParams(params domain.UpdateUserParams) (domain.UpdateUse
 		validation.add("password", "too_short", "Пароль должен быть минимум 8 символов")
 	}
 
-	if !params.Role.IsValid() {
-		validation.add("role", "invalid_enum", "Роль должна быть admin, employee, student или guest")
-	}
-	if params.IsSuperAdmin != nil && *params.IsSuperAdmin && params.Role != domain.UserRoleAdmin {
-		validation.add("is_super_admin", "forbidden_for_role", "Супер-админ должен иметь роль admin")
-	}
-
-	if params.Gender == "" {
-		params.Gender = domain.GenderUnspecified
-	}
-
-	if !params.Gender.IsValid() {
-		validation.add("gender", "invalid_enum", "Пол должен быть male, female, other или unspecified")
-	}
-
 	addDateValidation(&validation, "birth_date", params.BirthDate, "Дата рождения")
 
 	if err := validateEmail(params.Email); err != nil {
 		validation.add("email", "invalid_email", "Email указан неверно")
 	}
 
-	if err := validateRolePayloads(params.Role, params.EmployeeInfo, params.StudentInfo, params.GuestInfo); err != nil {
-		return domain.UpdateUserParams{}, err
-	}
-	addStudentInfoDateValidation(&validation, params.StudentInfo)
-
 	if err := validation.err(); err != nil {
 		return domain.UpdateUserParams{}, err
 	}
-
-	normalizeUserRoleDetailsForUpdate(&params)
 
 	return params, nil
 }
@@ -269,13 +225,6 @@ func normalizeUpdateUserParams(params domain.UpdateUserParams) (domain.UpdateUse
 func normalizeUserListFilter(filter domain.UserListFilter) (domain.UserListFilter, error) {
 	filter.Search = strings.TrimSpace(filter.Search)
 
-	if filter.Role != nil {
-		role := domain.UserRole(strings.TrimSpace(string(*filter.Role)))
-		if !role.IsValid() {
-			return domain.UserListFilter{}, fmt.Errorf("role filter is invalid: %w", domain.ErrValidation)
-		}
-		filter.Role = &role
-	}
 	active := true
 	filter.IsActive = &active
 
@@ -294,76 +243,6 @@ func normalizeUserListFilter(filter domain.UserListFilter) (domain.UserListFilte
 	return filter, nil
 }
 
-func validateRolePayloads(
-	role domain.UserRole,
-	employeeInfo *domain.EmployeeInfo,
-	studentInfo *domain.StudentInfo,
-	guestInfo *domain.GuestInfo,
-) error {
-	var validation fieldValidationBuilder
-	if role != domain.UserRoleEmployee && employeeInfo != nil {
-		validation.add("employee_info", "forbidden_for_role", "employee_info можно передавать только для роли employee")
-	}
-
-	if role != domain.UserRoleStudent && studentInfo != nil {
-		validation.add("student_info", "forbidden_for_role", "student_info можно передавать только для роли student")
-	}
-
-	if role != domain.UserRoleGuest && guestInfo != nil {
-		validation.add("guest_info", "forbidden_for_role", "guest_info можно передавать только для роли guest")
-	}
-
-	return validation.err()
-}
-
-func normalizeUserRoleDetails(params *domain.CreateUserParams) {
-	if params.EmployeeInfo != nil {
-		params.EmployeeInfo.Branch = strings.TrimSpace(params.EmployeeInfo.Branch)
-		params.EmployeeInfo.Office = strings.TrimSpace(params.EmployeeInfo.Office)
-		params.EmployeeInfo.Position = strings.TrimSpace(params.EmployeeInfo.Position)
-		params.EmployeeInfo.Department = strings.TrimSpace(params.EmployeeInfo.Department)
-		params.EmployeeInfo.EmployeeID = strings.TrimSpace(params.EmployeeInfo.EmployeeID)
-		params.EmployeeInfo.HireDate = strings.TrimSpace(params.EmployeeInfo.HireDate)
-		params.EmployeeInfo.Notes = strings.TrimSpace(params.EmployeeInfo.Notes)
-	}
-
-	if params.StudentInfo != nil {
-		params.StudentInfo.StudentID = strings.TrimSpace(params.StudentInfo.StudentID)
-		params.StudentInfo.GroupName = strings.TrimSpace(params.StudentInfo.GroupName)
-		params.StudentInfo.EducationLevel = strings.TrimSpace(params.StudentInfo.EducationLevel)
-		params.StudentInfo.BirthDate = strings.TrimSpace(params.StudentInfo.BirthDate)
-	}
-
-	if params.GuestInfo != nil {
-		params.GuestInfo.Source = strings.TrimSpace(params.GuestInfo.Source)
-		params.GuestInfo.InvitedBy = normalizeOptionalString(params.GuestInfo.InvitedBy)
-	}
-}
-
-func normalizeUserRoleDetailsForUpdate(params *domain.UpdateUserParams) {
-	if params.EmployeeInfo != nil {
-		params.EmployeeInfo.Branch = strings.TrimSpace(params.EmployeeInfo.Branch)
-		params.EmployeeInfo.Office = strings.TrimSpace(params.EmployeeInfo.Office)
-		params.EmployeeInfo.Position = strings.TrimSpace(params.EmployeeInfo.Position)
-		params.EmployeeInfo.Department = strings.TrimSpace(params.EmployeeInfo.Department)
-		params.EmployeeInfo.EmployeeID = strings.TrimSpace(params.EmployeeInfo.EmployeeID)
-		params.EmployeeInfo.HireDate = strings.TrimSpace(params.EmployeeInfo.HireDate)
-		params.EmployeeInfo.Notes = strings.TrimSpace(params.EmployeeInfo.Notes)
-	}
-
-	if params.StudentInfo != nil {
-		params.StudentInfo.StudentID = strings.TrimSpace(params.StudentInfo.StudentID)
-		params.StudentInfo.GroupName = strings.TrimSpace(params.StudentInfo.GroupName)
-		params.StudentInfo.EducationLevel = strings.TrimSpace(params.StudentInfo.EducationLevel)
-		params.StudentInfo.BirthDate = strings.TrimSpace(params.StudentInfo.BirthDate)
-	}
-
-	if params.GuestInfo != nil {
-		params.GuestInfo.Source = strings.TrimSpace(params.GuestInfo.Source)
-		params.GuestInfo.InvitedBy = normalizeOptionalString(params.GuestInfo.InvitedBy)
-	}
-}
-
 func validateEmail(value *string) error {
 	if value == nil {
 		return nil
@@ -374,13 +253,6 @@ func validateEmail(value *string) error {
 	}
 
 	return nil
-}
-
-func addStudentInfoDateValidation(validation *fieldValidationBuilder, studentInfo *domain.StudentInfo) {
-	if studentInfo == nil {
-		return
-	}
-	addDateValidation(validation, "birth_date", &studentInfo.BirthDate, "Дата рождения")
 }
 
 func addDateValidation(validation *fieldValidationBuilder, field string, value *string, label string) {

@@ -42,7 +42,6 @@ type Course struct {
 	Description             MultiLangText `json:"description"`
 	CoverImageURL           *string       `json:"cover_image_url,omitempty"`
 	VideoURL                *string       `json:"video_url,omitempty"`
-	QuizID                  *string       `json:"quiz_id,omitempty"`
 	Category                *string       `json:"category,omitempty"`
 	Status                  CourseStatus  `json:"status"`
 	Platforms               []Platform    `json:"platforms"`
@@ -50,37 +49,56 @@ type Course struct {
 	CertificateEnabled      bool          `json:"certificate_enabled"`
 	CertificatePassingScore int           `json:"certificate_passing_score"`
 	ReviewsEnabled          bool          `json:"reviews_enabled"`
+	QuizPassPercent         int           `json:"quiz_pass_percent"`
+	QuizMinutes             int           `json:"quiz_minutes"`
+	MaxAttempts             int           `json:"max_attempts"`
+	RetakeCooldownDays      int           `json:"retake_cooldown_days"`
+	CreatedByUserID         *string       `json:"created_by_user_id,omitempty"`
+	CreatedByName           string        `json:"created_by_name,omitempty"`
+	Questions               []Question    `json:"questions,omitempty"`
 	CreatedAt               time.Time     `json:"created_at"`
 	UpdatedAt               time.Time     `json:"updated_at"`
 }
 
 type CreateCourseParams struct {
-	Title                   MultiLangText `json:"title"`
-	Description             MultiLangText `json:"description"`
-	CoverImageURL           *string       `json:"cover_image_url,omitempty"`
-	VideoURL                *string       `json:"video_url,omitempty"`
-	Category                *string       `json:"category,omitempty"`
-	Status                  CourseStatus  `json:"status"`
-	Platforms               []Platform    `json:"platforms"`
-	EstimatedMinutes        *int          `json:"estimated_minutes,omitempty"`
-	CertificateEnabled      *bool         `json:"certificate_enabled,omitempty"`
-	CertificatePassingScore int           `json:"certificate_passing_score"`
-	ReviewsEnabled          *bool         `json:"reviews_enabled,omitempty"`
+	Title                   MultiLangText     `json:"title"`
+	Description             MultiLangText     `json:"description"`
+	CoverImageURL           *string           `json:"cover_image_url,omitempty"`
+	VideoURL                *string           `json:"video_url,omitempty"`
+	Category                *string           `json:"category,omitempty"`
+	Status                  CourseStatus      `json:"status"`
+	Platforms               []Platform        `json:"platforms"`
+	EstimatedMinutes        *int              `json:"estimated_minutes,omitempty"`
+	CertificateEnabled      *bool             `json:"certificate_enabled,omitempty"`
+	CertificatePassingScore int               `json:"certificate_passing_score"`
+	ReviewsEnabled          *bool             `json:"reviews_enabled,omitempty"`
+	QuizPassPercent         int               `json:"quiz_pass_percent"`
+	QuizMinutes             int               `json:"quiz_minutes"`
+	MaxAttempts             int               `json:"max_attempts"`
+	RetakeCooldownDays      int               `json:"retake_cooldown_days"`
+	Questions               []QuestionPayload `json:"questions"`
+	CreatedByUserID         *string           `json:"-"`
+	CreatedByName           string            `json:"-"`
 }
 
 type UpdateCourseParams struct {
-	ID                      string        `json:"id"`
-	Title                   MultiLangText `json:"title"`
-	Description             MultiLangText `json:"description"`
-	CoverImageURL           *string       `json:"cover_image_url,omitempty"`
-	VideoURL                *string       `json:"video_url,omitempty"`
-	Category                *string       `json:"category,omitempty"`
-	Status                  CourseStatus  `json:"status"`
-	Platforms               []Platform    `json:"platforms"`
-	EstimatedMinutes        *int          `json:"estimated_minutes,omitempty"`
-	CertificateEnabled      bool          `json:"certificate_enabled"`
-	CertificatePassingScore int           `json:"certificate_passing_score"`
-	ReviewsEnabled          bool          `json:"reviews_enabled"`
+	ID                      string            `json:"id"`
+	Title                   MultiLangText     `json:"title"`
+	Description             MultiLangText     `json:"description"`
+	CoverImageURL           *string           `json:"cover_image_url,omitempty"`
+	VideoURL                *string           `json:"video_url,omitempty"`
+	Category                *string           `json:"category,omitempty"`
+	Status                  CourseStatus      `json:"status"`
+	Platforms               []Platform        `json:"platforms"`
+	EstimatedMinutes        *int              `json:"estimated_minutes,omitempty"`
+	CertificateEnabled      bool              `json:"certificate_enabled"`
+	CertificatePassingScore int               `json:"certificate_passing_score"`
+	ReviewsEnabled          bool              `json:"reviews_enabled"`
+	QuizPassPercent         int               `json:"quiz_pass_percent"`
+	QuizMinutes             int               `json:"quiz_minutes"`
+	MaxAttempts             int               `json:"max_attempts"`
+	RetakeCooldownDays      int               `json:"retake_cooldown_days"`
+	Questions               []QuestionPayload `json:"questions"`
 }
 
 type CourseListFilter struct {

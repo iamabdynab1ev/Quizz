@@ -51,12 +51,8 @@ func CurrentSessionToken(ctx context.Context) (string, bool) {
 	return appctx.CurrentSessionToken(ctx)
 }
 
-func RequireRoles(roles ...domain.UserRole) func(next nethttp.Handler) nethttp.Handler {
-	allowed := make(map[domain.UserRole]struct{}, len(roles))
-	for _, role := range roles {
-		allowed[role] = struct{}{}
-	}
-
+// RequireAdmin allows admins (is_admin=true) and super admins (is_super_admin=true).
+func RequireAdmin() func(next nethttp.Handler) nethttp.Handler {
 	return func(next nethttp.Handler) nethttp.Handler {
 		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 			identity, ok := CurrentAuthIdentity(r.Context())
@@ -65,7 +61,7 @@ func RequireRoles(roles ...domain.UserRole) func(next nethttp.Handler) nethttp.H
 				return
 			}
 
-			if _, exists := allowed[identity.User.Role]; !exists {
+			if !identity.User.IsAdmin && !identity.User.IsSuperAdmin {
 				writeMiddlewareError(w, nethttp.StatusForbidden, "forbidden", "Недостаточно прав")
 				return
 			}
@@ -75,6 +71,7 @@ func RequireRoles(roles ...domain.UserRole) func(next nethttp.Handler) nethttp.H
 	}
 }
 
+// RequireSuperAdmin allows only the super admin (is_super_admin=true).
 func RequireSuperAdmin() func(next nethttp.Handler) nethttp.Handler {
 	return func(next nethttp.Handler) nethttp.Handler {
 		return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -84,7 +81,7 @@ func RequireSuperAdmin() func(next nethttp.Handler) nethttp.Handler {
 				return
 			}
 
-			if identity.User.Role != domain.UserRoleAdmin || !identity.User.IsSuperAdmin {
+			if !identity.User.IsSuperAdmin {
 				writeMiddlewareError(w, nethttp.StatusForbidden, "forbidden", "Недостаточно прав")
 				return
 			}

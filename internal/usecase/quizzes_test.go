@@ -1,101 +1,109 @@
 package usecase
 
 import (
-	"errors"
 	"testing"
 
 	"lms-arvand-backend/internal/domain"
 )
 
-func TestNormalizeCreateQuizParams_AllowsEmptyQuestions(t *testing.T) {
-	params := domain.CreateQuizParams{
-		Title:        domain.MultiLangText{RU: "Тест", TJ: "Санҷиш"},
-		Description:  domain.MultiLangText{RU: "Описание", TJ: "Тавсиф"},
-		PassingScore: 60,
-	}
-
-	normalized, err := normalizeCreateQuizParams(params)
+func TestNormalizeQuestionPayloads_AllowsEmpty(t *testing.T) {
+	result, err := normalizeQuestionPayloads(nil)
 	if err != nil {
-		t.Fatalf("expected empty questions to be allowed, got error: %v", err)
+		t.Fatalf("expected nil questions to be allowed, got error: %v", err)
 	}
-
-	if normalized.Status != domain.QuizStatusDraft {
-		t.Fatalf("expected draft status, got %s", normalized.Status)
-	}
-
-	if normalized.MaxAttempts != 3 {
-		t.Fatalf("expected default max attempts 3, got %d", normalized.MaxAttempts)
-	}
-	if normalized.RetakeCooldownDays != 30 {
-		t.Fatalf("expected default retake cooldown 30 days, got %d", normalized.RetakeCooldownDays)
-	}
-
-	if len(normalized.Questions) != 0 {
-		t.Fatalf("expected empty questions, got %d", len(normalized.Questions))
+	if len(result) != 0 {
+		t.Fatalf("expected empty result, got %d", len(result))
 	}
 }
 
-func TestNormalizeCreateQuizParamsRejectsPassingPointsAboveTotal(t *testing.T) {
-	params := domain.CreateQuizParams{
-		Title:         domain.MultiLangText{RU: "Тест", TJ: "Санҷиш"},
-		Description:   domain.MultiLangText{RU: "Описание", TJ: "Тавсиф"},
-		PassingPoints: 11,
-		Questions: []domain.QuestionPayload{
-			{
-				Position: 1,
-				Type:     domain.QuestionTypeSingleChoice,
-				Prompt:   domain.MultiLangText{RU: "Вопрос", TJ: "Савол"},
-				Points:   10,
-				Config: mustJSON(t, map[string]any{
-					"options": []map[string]any{
-						{"id": "a", "is_correct": true},
-						{"id": "b", "is_correct": false},
-					},
-				}),
-			},
+func TestNormalizeQuestionPayloads_DefaultsPosition(t *testing.T) {
+	questions := []domain.QuestionPayload{
+		{
+			Type:   domain.QuestionTypeSingleChoice,
+			Prompt: domain.MultiLangText{RU: "Вопрос", TJ: "Савол"},
+			Config: mustJSON(t, map[string]any{
+				"options": []map[string]any{
+					{"id": "a", "is_correct": true},
+					{"id": "b", "is_correct": false},
+				},
+			}),
 		},
 	}
 
-	_, err := normalizeCreateQuizParams(params)
-	if err == nil {
-		t.Fatalf("expected passing points validation error")
-	}
-
-	var appErr *domain.AppError
-	if !errors.As(err, &appErr) {
-		t.Fatalf("expected app error, got %T: %v", err, err)
-	}
-	if len(appErr.Fields) == 0 || appErr.Fields[0].Field != "passing_points" {
-		t.Fatalf("expected passing_points field error, got %#v", appErr.Fields)
-	}
-}
-
-func TestNormalizeCreateQuizParamsComputesPassingPointsFromLegacyPercent(t *testing.T) {
-	params := domain.CreateQuizParams{
-		Title:        domain.MultiLangText{RU: "Тест", TJ: "Санҷиш"},
-		Description:  domain.MultiLangText{RU: "Описание", TJ: "Тавсиф"},
-		PassingScore: 80,
-		Questions: []domain.QuestionPayload{
-			{
-				Position: 1,
-				Type:     domain.QuestionTypeSingleChoice,
-				Prompt:   domain.MultiLangText{RU: "Вопрос", TJ: "Савол"},
-				Points:   10,
-				Config: mustJSON(t, map[string]any{
-					"options": []map[string]any{
-						{"id": "a", "is_correct": true},
-						{"id": "b", "is_correct": false},
-					},
-				}),
-			},
-		},
-	}
-
-	normalized, err := normalizeCreateQuizParams(params)
+	result, err := normalizeQuestionPayloads(questions)
 	if err != nil {
 		t.Fatalf("normalize returned error: %v", err)
 	}
-	if normalized.PassingPoints != 8 {
-		t.Fatalf("expected passing points 8, got %v", normalized.PassingPoints)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 question, got %d", len(result))
+	}
+	if result[0].Position != 1 {
+		t.Fatalf("expected position 1, got %d", result[0].Position)
+	}
+}
+
+func TestNormalizeQuestionPayloads_DefaultsPoints(t *testing.T) {
+	questions := []domain.QuestionPayload{
+		{
+			Position: 1,
+			Type:     domain.QuestionTypeSingleChoice,
+			Prompt:   domain.MultiLangText{RU: "Вопрос", TJ: "Савол"},
+			Points:   0,
+			Config: mustJSON(t, map[string]any{
+				"options": []map[string]any{
+					{"id": "a", "is_correct": true},
+				},
+			}),
+		},
+	}
+
+	result, err := normalizeQuestionPayloads(questions)
+	if err != nil {
+		t.Fatalf("normalize returned error: %v", err)
+	}
+	if result[0].Points != 1 {
+		t.Fatalf("expected default points 1, got %v", result[0].Points)
+	}
+}
+
+func TestNormalizeQuestionPayloads_RejectsDuplicatePositions(t *testing.T) {
+	questions := []domain.QuestionPayload{
+		{
+			Position: 1,
+			Type:     domain.QuestionTypeSingleChoice,
+			Prompt:   domain.MultiLangText{RU: "Q1", TJ: "Q1"},
+			Config: mustJSON(t, map[string]any{
+				"options": []map[string]any{{"id": "a", "is_correct": true}},
+			}),
+		},
+		{
+			Position: 1,
+			Type:     domain.QuestionTypeSingleChoice,
+			Prompt:   domain.MultiLangText{RU: "Q2", TJ: "Q2"},
+			Config: mustJSON(t, map[string]any{
+				"options": []map[string]any{{"id": "a", "is_correct": true}},
+			}),
+		},
+	}
+
+	_, err := normalizeQuestionPayloads(questions)
+	if err == nil {
+		t.Fatalf("expected error for duplicate positions")
+	}
+}
+
+func TestNormalizeQuizScoringDefaults(t *testing.T) {
+	score, minutes, maxAttempts, cooldown := normalizeQuizScoringAndAttempts(0, 0, 0, 0, &fieldValidationBuilder{})
+	if score != 80 {
+		t.Fatalf("expected default passing score 80, got %d", score)
+	}
+	if minutes != 0 {
+		t.Fatalf("expected quiz minutes 0, got %d", minutes)
+	}
+	if maxAttempts != 3 {
+		t.Fatalf("expected default max attempts 3, got %d", maxAttempts)
+	}
+	if cooldown != 30 {
+		t.Fatalf("expected default retake cooldown 30, got %d", cooldown)
 	}
 }

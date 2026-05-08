@@ -39,7 +39,6 @@ type RegisterParams struct {
 	LastName   string  `json:"last_name"`
 	Patronymic string  `json:"patronymic,omitempty"`
 	Phone      *string `json:"phone,omitempty"`
-	Gender     Gender  `json:"gender"`
 	IsMale     *bool   `json:"is_male,omitempty"`
 	Address    *string `json:"address,omitempty"`
 	City       *string `json:"city,omitempty"`
@@ -58,7 +57,6 @@ type UpdateProfileParams struct {
 	LastName     string  `json:"last_name"`
 	Patronymic   string  `json:"patronymic,omitempty"`
 	Phone        *string `json:"phone,omitempty"`
-	Gender       Gender  `json:"gender"`
 	IsMale       *bool   `json:"is_male,omitempty"`
 	Address      *string `json:"address,omitempty"`
 	City         *string `json:"city,omitempty"`

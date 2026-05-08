@@ -18,37 +18,20 @@ const userSelectColumns = `
 	u.email,
 	u.google_id,
 	u.password_hash,
-	u.role,
+	u.is_admin,
 	u.is_super_admin,
 	u.first_name,
 	u.last_name,
 	u.patronymic,
 	u.phone,
-	u.gender,
+	u.is_male,
 	u.birth_date,
 	u.address,
 	u.city,
 	u.avatar_url,
 	u.is_active,
 	u.created_at,
-	u.updated_at,
-	emp.user_id IS NOT NULL AS has_employee_info,
-	emp.branch,
-	emp.office,
-	emp.position,
-	emp.department,
-	emp.employee_id,
-	emp.hire_date,
-	emp.notes,
-	stu.user_id IS NOT NULL AS has_student_info,
-	stu.student_id,
-	stu.group_name,
-	stu.education_level,
-	stu.birth_date,
-	gst.user_id IS NOT NULL AS has_guest_info,
-	gst.source,
-	gst.invited_by,
-	gst.expires_at
+	u.updated_at
 `
 
 type userRowScanner interface {
@@ -64,28 +47,19 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 }
 
 func (r *UserRepository) Create(ctx context.Context, params domain.CreateUserParams) (domain.User, error) {
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return domain.User{}, fmt.Errorf("repository postgres users create begin tx: %w", err)
-	}
-
-	defer func() {
-		_ = tx.Rollback(ctx)
-	}()
-
 	var userID string
-	if err := tx.QueryRow(ctx, `
+	if err := r.pool.QueryRow(ctx, `
 		INSERT INTO users (
 			email,
 			google_id,
 			password_hash,
-			role,
+			is_admin,
 			is_super_admin,
 			first_name,
 			last_name,
 			patronymic,
 			phone,
-			gender,
+			is_male,
 			birth_date,
 			address,
 			city,
@@ -98,27 +72,19 @@ func (r *UserRepository) Create(ctx context.Context, params domain.CreateUserPar
 		nullableStringPointerForWrite(params.Email),
 		nullableStringPointerForWrite(params.GoogleID),
 		nullableStringPointerForWrite(params.PasswordHash),
-		string(params.Role),
+		params.IsAdmin,
 		params.IsSuperAdmin,
 		nullableStringForWrite(params.FirstName),
 		nullableStringForWrite(params.LastName),
 		nullableStringForWrite(params.Patronymic),
 		nullableStringPointerForWrite(params.Phone),
-		string(params.Gender),
+		nullableBoolPointerForWrite(params.IsMale),
 		stringPointerForWrite(params.BirthDate),
 		nullableStringPointerForWrite(params.Address),
 		nullableStringPointerForWrite(params.City),
 		nullableStringPointerForWrite(params.AvatarURL),
 	).Scan(&userID); err != nil {
 		return domain.User{}, wrapPGError("repository postgres users create insert", err)
-	}
-
-	if err := r.replaceRoleDetails(ctx, tx, userID, params.Role, params.EmployeeInfo, params.StudentInfo, params.GuestInfo); err != nil {
-		return domain.User{}, fmt.Errorf("repository postgres users create role details: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return domain.User{}, fmt.Errorf("repository postgres users create commit: %w", err)
 	}
 
 	user, err := r.GetByID(ctx, userID)
@@ -134,9 +100,6 @@ func (r *UserRepository) GetByID(ctx context.Context, userID string) (domain.Use
 		r.pool.QueryRow(ctx, `
 			SELECT `+userSelectColumns+`
 			FROM users u
-			LEFT JOIN user_employee_info emp ON emp.user_id = u.id
-			LEFT JOIN user_student_info stu ON stu.user_id = u.id
-			LEFT JOIN user_guest_info gst ON gst.user_id = u.id
 			WHERE u.id = $1
 		`, userID),
 	)
@@ -156,9 +119,6 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (domain.U
 		r.pool.QueryRow(ctx, `
 			SELECT `+userSelectColumns+`
 			FROM users u
-			LEFT JOIN user_employee_info emp ON emp.user_id = u.id
-			LEFT JOIN user_student_info stu ON stu.user_id = u.id
-			LEFT JOIN user_guest_info gst ON gst.user_id = u.id
 			WHERE LOWER(u.email) = LOWER($1)
 			LIMIT 1
 		`, email),
@@ -179,9 +139,6 @@ func (r *UserRepository) GetByGoogleID(ctx context.Context, googleID string) (do
 		r.pool.QueryRow(ctx, `
 			SELECT `+userSelectColumns+`
 			FROM users u
-			LEFT JOIN user_employee_info emp ON emp.user_id = u.id
-			LEFT JOIN user_student_info stu ON stu.user_id = u.id
-			LEFT JOIN user_guest_info gst ON gst.user_id = u.id
 			WHERE u.google_id = $1
 			LIMIT 1
 		`, googleID),
@@ -201,23 +158,9 @@ func (r *UserRepository) List(ctx context.Context, filter domain.UserListFilter)
 	buildQuery := func(includePagination bool) (string, []any) {
 		query := strings.Builder{}
 		if includePagination {
-			query.WriteString(`
-				SELECT ` + userSelectColumns + `
-				FROM users u
-				LEFT JOIN user_employee_info emp ON emp.user_id = u.id
-				LEFT JOIN user_student_info stu ON stu.user_id = u.id
-				LEFT JOIN user_guest_info gst ON gst.user_id = u.id
-				WHERE 1 = 1
-			`)
+			query.WriteString(`SELECT ` + userSelectColumns + ` FROM users u WHERE 1 = 1`)
 		} else {
-			query.WriteString(`
-				SELECT COUNT(*)
-				FROM users u
-				LEFT JOIN user_employee_info emp ON emp.user_id = u.id
-				LEFT JOIN user_student_info stu ON stu.user_id = u.id
-				LEFT JOIN user_guest_info gst ON gst.user_id = u.id
-				WHERE 1 = 1
-			`)
+			query.WriteString(`SELECT COUNT(*) FROM users u WHERE 1 = 1`)
 		}
 
 		args := make([]any, 0, 6)
@@ -236,9 +179,9 @@ func (r *UserRepository) List(ctx context.Context, filter domain.UserListFilter)
 			position++
 		}
 
-		if filter.Role != nil {
-			query.WriteString(fmt.Sprintf(" AND u.role = $%d", position))
-			args = append(args, string(*filter.Role))
+		if filter.IsAdmin != nil {
+			query.WriteString(fmt.Sprintf(" AND u.is_admin = $%d", position))
+			args = append(args, *filter.IsAdmin)
 			position++
 		}
 
@@ -287,29 +230,20 @@ func (r *UserRepository) List(ctx context.Context, filter domain.UserListFilter)
 }
 
 func (r *UserRepository) Update(ctx context.Context, params domain.UpdateUserParams) (domain.User, error) {
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return domain.User{}, fmt.Errorf("repository postgres users update begin tx: %w", err)
-	}
-
-	defer func() {
-		_ = tx.Rollback(ctx)
-	}()
-
 	var userID string
-	if err := tx.QueryRow(ctx, `
+	if err := r.pool.QueryRow(ctx, `
 		UPDATE users
 		SET
 			email = $2,
 			google_id = $3,
 			password_hash = COALESCE($4, password_hash),
-			role = CASE WHEN is_super_admin THEN 'admin'::user_role ELSE $5::user_role END,
+			is_admin = CASE WHEN is_super_admin THEN true ELSE $5 END,
 			is_super_admin = CASE WHEN is_super_admin THEN true ELSE COALESCE($6, is_super_admin) END,
 			first_name = $7,
 			last_name = $8,
 			patronymic = $9,
 			phone = $10,
-			gender = $11,
+			is_male = $11,
 			birth_date = NULLIF($12, '')::date,
 			address = $13,
 			city = $14,
@@ -323,13 +257,13 @@ func (r *UserRepository) Update(ctx context.Context, params domain.UpdateUserPar
 		nullableStringPointerForWrite(params.Email),
 		nullableStringPointerForWrite(params.GoogleID),
 		nullableStringPointerForWrite(params.PasswordHash),
-		string(params.Role),
+		params.IsAdmin,
 		nullableBoolPointerForWrite(params.IsSuperAdmin),
 		nullableStringForWrite(params.FirstName),
 		nullableStringForWrite(params.LastName),
 		nullableStringForWrite(params.Patronymic),
 		nullableStringPointerForWrite(params.Phone),
-		string(params.Gender),
+		nullableBoolPointerForWrite(params.IsMale),
 		stringPointerForWrite(params.BirthDate),
 		nullableStringPointerForWrite(params.Address),
 		nullableStringPointerForWrite(params.City),
@@ -341,14 +275,6 @@ func (r *UserRepository) Update(ctx context.Context, params domain.UpdateUserPar
 		}
 
 		return domain.User{}, wrapPGError("repository postgres users update", err)
-	}
-
-	if err := r.replaceRoleDetails(ctx, tx, userID, params.Role, params.EmployeeInfo, params.StudentInfo, params.GuestInfo); err != nil {
-		return domain.User{}, fmt.Errorf("repository postgres users update role details: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return domain.User{}, fmt.Errorf("repository postgres users update commit: %w", err)
 	}
 
 	user, err := r.GetByID(ctx, userID)
@@ -404,117 +330,6 @@ func (r *UserRepository) LinkGoogleID(ctx context.Context, userID, googleID stri
 	return user, nil
 }
 
-func (r *UserRepository) replaceRoleDetails(
-	ctx context.Context,
-	tx pgx.Tx,
-	userID string,
-	role domain.UserRole,
-	employeeInfo *domain.EmployeeInfo,
-	studentInfo *domain.StudentInfo,
-	guestInfo *domain.GuestInfo,
-) error {
-	if err := r.clearRoleDetails(ctx, tx, userID); err != nil {
-		return fmt.Errorf("repository postgres users replace role details clear: %w", err)
-	}
-
-	switch role {
-	case domain.UserRoleEmployee:
-		if employeeInfo == nil {
-			employeeInfo = &domain.EmployeeInfo{}
-		}
-
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO user_employee_info (
-				user_id,
-				branch,
-				office,
-				position,
-				department,
-				employee_id,
-				hire_date,
-				notes
-			) VALUES (
-				$1, $2, $3, $4, $5, $6, NULLIF($7, '')::date, $8
-			)
-		`,
-			userID,
-			nullableStringForWrite(employeeInfo.Branch),
-			nullableStringForWrite(employeeInfo.Office),
-			nullableStringForWrite(employeeInfo.Position),
-			nullableStringForWrite(employeeInfo.Department),
-			nullableStringForWrite(employeeInfo.EmployeeID),
-			employeeInfo.HireDate,
-			nullableStringForWrite(employeeInfo.Notes),
-		); err != nil {
-			return wrapPGError("repository postgres users insert employee info", err)
-		}
-	case domain.UserRoleStudent:
-		if studentInfo == nil {
-			studentInfo = &domain.StudentInfo{}
-		}
-
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO user_student_info (
-				user_id,
-				student_id,
-				group_name,
-				education_level,
-				birth_date
-			) VALUES (
-				$1, $2, $3, $4, NULLIF($5, '')::date
-			)
-		`,
-			userID,
-			nullableStringForWrite(studentInfo.StudentID),
-			nullableStringForWrite(studentInfo.GroupName),
-			nullableStringForWrite(studentInfo.EducationLevel),
-			studentInfo.BirthDate,
-		); err != nil {
-			return wrapPGError("repository postgres users insert student info", err)
-		}
-	case domain.UserRoleGuest:
-		if guestInfo == nil {
-			guestInfo = &domain.GuestInfo{}
-		}
-
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO user_guest_info (
-				user_id,
-				source,
-				invited_by,
-				expires_at
-			) VALUES (
-				$1, $2, $3::uuid, $4
-			)
-		`,
-			userID,
-			nullableStringForWrite(guestInfo.Source),
-			nullableStringPointerForWrite(guestInfo.InvitedBy),
-			nullableTimePointerForWrite(guestInfo.ExpiresAt),
-		); err != nil {
-			return wrapPGError("repository postgres users insert guest info", err)
-		}
-	}
-
-	return nil
-}
-
-func (r *UserRepository) clearRoleDetails(ctx context.Context, tx pgx.Tx, userID string) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM user_employee_info WHERE user_id = $1`, userID); err != nil {
-		return fmt.Errorf("repository postgres users clear employee info: %w", err)
-	}
-
-	if _, err := tx.Exec(ctx, `DELETE FROM user_student_info WHERE user_id = $1`, userID); err != nil {
-		return fmt.Errorf("repository postgres users clear student info: %w", err)
-	}
-
-	if _, err := tx.Exec(ctx, `DELETE FROM user_guest_info WHERE user_id = $1`, userID); err != nil {
-		return fmt.Errorf("repository postgres users clear guest info: %w", err)
-	}
-
-	return nil
-}
-
 func scanUser(scanner userRowScanner) (domain.User, error) {
 	var user domain.User
 	var email sql.NullString
@@ -524,42 +339,24 @@ func scanUser(scanner userRowScanner) (domain.User, error) {
 	var lastName sql.NullString
 	var patronymic sql.NullString
 	var phone sql.NullString
+	var isMale sql.NullBool
 	var birthDate sql.NullTime
 	var address sql.NullString
 	var city sql.NullString
 	var avatarURL sql.NullString
-	var role string
-	var gender string
-	var hasEmployeeInfo bool
-	var employeeBranch sql.NullString
-	var employeeOffice sql.NullString
-	var employeePosition sql.NullString
-	var employeeDepartment sql.NullString
-	var employeeID sql.NullString
-	var employeeHireDate sql.NullTime
-	var employeeNotes sql.NullString
-	var hasStudentInfo bool
-	var studentID sql.NullString
-	var studentGroupName sql.NullString
-	var studentEducationLevel sql.NullString
-	var studentBirthDate sql.NullTime
-	var hasGuestInfo bool
-	var guestSource sql.NullString
-	var guestInvitedBy sql.NullString
-	var guestExpiresAt sql.NullTime
 
 	if err := scanner.Scan(
 		&user.ID,
 		&email,
 		&googleID,
 		&passwordHash,
-		&role,
+		&user.IsAdmin,
 		&user.IsSuperAdmin,
 		&firstName,
 		&lastName,
 		&patronymic,
 		&phone,
-		&gender,
+		&isMale,
 		&birthDate,
 		&address,
 		&city,
@@ -567,23 +364,6 @@ func scanUser(scanner userRowScanner) (domain.User, error) {
 		&user.IsActive,
 		&user.CreatedAt,
 		&user.UpdatedAt,
-		&hasEmployeeInfo,
-		&employeeBranch,
-		&employeeOffice,
-		&employeePosition,
-		&employeeDepartment,
-		&employeeID,
-		&employeeHireDate,
-		&employeeNotes,
-		&hasStudentInfo,
-		&studentID,
-		&studentGroupName,
-		&studentEducationLevel,
-		&studentBirthDate,
-		&hasGuestInfo,
-		&guestSource,
-		&guestInvitedBy,
-		&guestExpiresAt,
 	); err != nil {
 		return domain.User{}, err
 	}
@@ -591,45 +371,17 @@ func scanUser(scanner userRowScanner) (domain.User, error) {
 	user.Email = optionalString(email)
 	user.GoogleID = optionalString(googleID)
 	user.PasswordHash = optionalString(passwordHash)
-	user.Role = domain.UserRole(role)
 	user.FirstName = firstName.String
 	user.LastName = lastName.String
 	user.Patronymic = patronymic.String
 	user.Phone = optionalString(phone)
-	user.Gender = domain.Gender(gender)
+	if isMale.Valid {
+		user.IsMale = &isMale.Bool
+	}
 	user.BirthDate = optionalDateString(birthDate)
 	user.Address = optionalString(address)
 	user.City = optionalString(city)
 	user.AvatarURL = optionalString(avatarURL)
-
-	if hasEmployeeInfo {
-		user.EmployeeInfo = &domain.EmployeeInfo{
-			Branch:     employeeBranch.String,
-			Office:     employeeOffice.String,
-			Position:   employeePosition.String,
-			Department: employeeDepartment.String,
-			EmployeeID: employeeID.String,
-			HireDate:   dateString(employeeHireDate),
-			Notes:      employeeNotes.String,
-		}
-	}
-
-	if hasStudentInfo {
-		user.StudentInfo = &domain.StudentInfo{
-			StudentID:      studentID.String,
-			GroupName:      studentGroupName.String,
-			EducationLevel: studentEducationLevel.String,
-			BirthDate:      dateString(studentBirthDate),
-		}
-	}
-
-	if hasGuestInfo {
-		user.GuestInfo = &domain.GuestInfo{
-			Source:    guestSource.String,
-			InvitedBy: optionalString(guestInvitedBy),
-			ExpiresAt: optionalTime(guestExpiresAt),
-		}
-	}
 
 	return user, nil
 }

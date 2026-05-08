@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"lms-arvand-backend/internal/domain"
+	"lms-arvand-backend/internal/handler/http/middleware"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -33,10 +34,27 @@ func NewCoursesHandler(logger *slog.Logger, useCase courseUseCase) *CoursesHandl
 }
 
 func (h *CoursesHandler) CreateCourse(w nethttp.ResponseWriter, r *nethttp.Request) {
+	identity, ok := middleware.CurrentAuthIdentity(r.Context())
+
 	var params domain.CreateCourseParams
 	if err := decodeJSON(w, r, &params, 1<<20); err != nil {
 		writeDecodeError(w, err)
 		return
+	}
+
+	if ok {
+		params.CreatedByUserID = &identity.User.ID
+		nameParts := []string{identity.User.FirstName, identity.User.LastName}
+		name := ""
+		for _, p := range nameParts {
+			if p != "" {
+				if name != "" {
+					name += " "
+				}
+				name += p
+			}
+		}
+		params.CreatedByName = name
 	}
 
 	course, err := h.useCase.Create(r.Context(), params)

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	nethttp "net/http"
 	"strconv"
-	"strings"
 
 	"lms-arvand-backend/internal/domain"
 
@@ -27,23 +26,20 @@ type UsersHandler struct {
 }
 
 type userRequest struct {
-	ID           string               `json:"id,omitempty"`
-	Email        *string              `json:"email,omitempty"`
-	GoogleID     *string              `json:"google_id,omitempty"`
-	Password     *string              `json:"password,omitempty"`
-	IsAdmin      *bool                `json:"is_admin,omitempty"`
-	FirstName    string               `json:"first_name"`
-	LastName     string               `json:"last_name"`
-	Patronymic   string               `json:"patronymic,omitempty"`
-	Phone        *string              `json:"phone,omitempty"`
-	IsMale       *bool                `json:"is_male,omitempty"`
-	Address      *string              `json:"address,omitempty"`
-	City         *string              `json:"city,omitempty"`
-	AvatarURL    *string              `json:"avatar_url,omitempty"`
-	BirthDate    *string              `json:"birth_date,omitempty"`
-	EmployeeInfo *domain.EmployeeInfo `json:"employee_info,omitempty"`
-	StudentInfo  *domain.StudentInfo  `json:"student_info,omitempty"`
-	GuestInfo    *domain.GuestInfo    `json:"guest_info,omitempty"`
+	ID         string  `json:"id,omitempty"`
+	Email      *string `json:"email,omitempty"`
+	GoogleID   *string `json:"google_id,omitempty"`
+	Password   *string `json:"password,omitempty"`
+	IsAdmin    *bool   `json:"is_admin,omitempty"`
+	FirstName  string  `json:"first_name"`
+	LastName   string  `json:"last_name"`
+	Patronymic string  `json:"patronymic,omitempty"`
+	Phone      *string `json:"phone,omitempty"`
+	IsMale     *bool   `json:"is_male,omitempty"`
+	Address    *string `json:"address,omitempty"`
+	City       *string `json:"city,omitempty"`
+	AvatarURL  *string `json:"avatar_url,omitempty"`
+	BirthDate  *string `json:"birth_date,omitempty"`
 }
 
 func NewUsersHandler(logger *slog.Logger, useCase userUseCase) *UsersHandler {
@@ -60,9 +56,7 @@ func (h *UsersHandler) CreateUser(w nethttp.ResponseWriter, r *nethttp.Request) 
 		return
 	}
 
-	params := request.toCreateParams()
-
-	user, err := h.useCase.Create(r.Context(), params)
+	user, err := h.useCase.Create(r.Context(), request.toCreateParams())
 	if err != nil {
 		status := writeMappedError(w, err)
 		if status >= nethttp.StatusInternalServerError {
@@ -149,104 +143,48 @@ func (h *UsersHandler) DeactivateUser(w nethttp.ResponseWriter, r *nethttp.Reque
 }
 
 func (r userRequest) toCreateParams() domain.CreateUserParams {
-	role := normalizeUserRequestRole(r.IsAdmin)
 	return domain.CreateUserParams{
-		Email:        r.Email,
-		GoogleID:     r.GoogleID,
-		Password:     r.Password,
-		Role:         role,
-		FirstName:    r.FirstName,
-		LastName:     r.LastName,
-		Patronymic:   r.Patronymic,
-		Phone:        r.Phone,
-		Gender:       normalizeUserRequestGender(r.IsMale),
-		BirthDate:    r.BirthDate,
-		Address:      r.Address,
-		City:         r.City,
-		AvatarURL:    r.AvatarURL,
-		EmployeeInfo: infoForEmployee(role, r.EmployeeInfo),
-		StudentInfo:  infoForStudent(role, r.StudentInfo, r.BirthDate),
-		GuestInfo:    infoForGuest(role, r.GuestInfo),
+		Email:      r.Email,
+		GoogleID:   r.GoogleID,
+		Password:   r.Password,
+		IsAdmin:    boolFromPointer(r.IsAdmin),
+		FirstName:  r.FirstName,
+		LastName:   r.LastName,
+		Patronymic: r.Patronymic,
+		Phone:      r.Phone,
+		IsMale:     r.IsMale,
+		BirthDate:  r.BirthDate,
+		Address:    r.Address,
+		City:       r.City,
+		AvatarURL:  r.AvatarURL,
 	}
 }
 
 func (r userRequest) toUpdateParams() domain.UpdateUserParams {
-	role := normalizeUserRequestRole(r.IsAdmin)
-
 	return domain.UpdateUserParams{
-		ID:           r.ID,
-		Email:        r.Email,
-		GoogleID:     r.GoogleID,
-		Password:     r.Password,
-		Role:         role,
-		FirstName:    r.FirstName,
-		LastName:     r.LastName,
-		Patronymic:   r.Patronymic,
-		Phone:        r.Phone,
-		Gender:       normalizeUserRequestGender(r.IsMale),
-		BirthDate:    r.BirthDate,
-		Address:      r.Address,
-		City:         r.City,
-		AvatarURL:    r.AvatarURL,
-		IsActive:     true,
-		EmployeeInfo: infoForEmployee(role, r.EmployeeInfo),
-		StudentInfo:  infoForStudent(role, r.StudentInfo, r.BirthDate),
-		GuestInfo:    infoForGuest(role, r.GuestInfo),
+		ID:         r.ID,
+		Email:      r.Email,
+		GoogleID:   r.GoogleID,
+		Password:   r.Password,
+		IsAdmin:    boolFromPointer(r.IsAdmin),
+		FirstName:  r.FirstName,
+		LastName:   r.LastName,
+		Patronymic: r.Patronymic,
+		Phone:      r.Phone,
+		IsMale:     r.IsMale,
+		BirthDate:  r.BirthDate,
+		Address:    r.Address,
+		City:       r.City,
+		AvatarURL:  r.AvatarURL,
+		IsActive:   true,
 	}
 }
 
-func normalizeUserRequestRole(isAdmin *bool) domain.UserRole {
-	if isAdmin != nil {
-		if *isAdmin {
-			return domain.UserRoleAdmin
-		}
-		return domain.UserRoleStudent
+func boolFromPointer(v *bool) bool {
+	if v == nil {
+		return false
 	}
-
-	return domain.UserRoleStudent
-}
-
-func normalizeUserRequestGender(isMale *bool) domain.Gender {
-	if isMale != nil {
-		if *isMale {
-			return domain.GenderMale
-		}
-		return domain.GenderFemale
-	}
-
-	return domain.GenderUnspecified
-}
-
-func infoForEmployee(role domain.UserRole, value *domain.EmployeeInfo) *domain.EmployeeInfo {
-	if role == domain.UserRoleEmployee {
-		return value
-	}
-
-	return nil
-}
-
-func infoForStudent(role domain.UserRole, value *domain.StudentInfo, birthDate *string) *domain.StudentInfo {
-	if role != domain.UserRoleStudent {
-		return nil
-	}
-
-	if value == nil {
-		value = &domain.StudentInfo{}
-	}
-
-	if birthDate != nil {
-		value.BirthDate = strings.TrimSpace(*birthDate)
-	}
-
-	return value
-}
-
-func infoForGuest(role domain.UserRole, value *domain.GuestInfo) *domain.GuestInfo {
-	if role == domain.UserRoleGuest {
-		return value
-	}
-
-	return nil
+	return *v
 }
 
 func (h *UsersHandler) parseUserListFilter(r *nethttp.Request) (domain.UserListFilter, error) {
@@ -256,9 +194,12 @@ func (h *UsersHandler) parseUserListFilter(r *nethttp.Request) (domain.UserListF
 		Search: query.Get("search"),
 	}
 
-	if roleValue := query.Get("role"); roleValue != "" {
-		role := domain.UserRole(roleValue)
-		filter.Role = &role
+	if isAdminValue := query.Get("is_admin"); isAdminValue != "" {
+		v, err := strconv.ParseBool(isAdminValue)
+		if err != nil {
+			return domain.UserListFilter{}, fmt.Errorf("is_admin must be true or false")
+		}
+		filter.IsAdmin = &v
 	}
 
 	if limitValue := query.Get("limit"); limitValue != "" {

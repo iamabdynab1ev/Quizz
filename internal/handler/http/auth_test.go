@@ -73,7 +73,7 @@ func TestAuthHandlerLoginUsesEmailFallback(t *testing.T) {
 			return domain.LoginResult{
 				Token:     "session-token",
 				ExpiresAt: func() *time.Time { ts := time.Now().Add(time.Hour); return &ts }(),
-				User:      domain.User{ID: "user-id", Role: domain.UserRoleAdmin},
+				User:      domain.User{ID: "user-id", IsAdmin: true},
 			}, nil
 		},
 	}

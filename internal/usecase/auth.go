@@ -61,7 +61,6 @@ type AuthUseCase struct {
 	passwordResetTTL    time.Duration
 	passwordResetReturn bool
 	google              googleTokenVerifier
-	googleDefaultRole   domain.UserRole
 	audit               *AuditLogger
 	now                 func() time.Time
 }
@@ -81,7 +80,7 @@ func NewAuthUseCase(
 	passwordResetTTL time.Duration,
 	passwordResetReturn bool,
 	google googleTokenVerifier,
-	googleDefaultRole string,
+	_ string, // googleDefaultRole removed — all self-registered users are clients
 ) *AuthUseCase {
 	return &AuthUseCase{
 		users:               users,
@@ -98,7 +97,6 @@ func NewAuthUseCase(
 		passwordResetTTL:    passwordResetTTL,
 		passwordResetReturn: passwordResetReturn,
 		google:              google,
-		googleDefaultRole:   normalizeGoogleDefaultRole(googleDefaultRole),
 		now:                 time.Now,
 	}
 }
@@ -124,23 +122,20 @@ func (u *AuthUseCase) Register(ctx context.Context, params domain.RegisterParams
 	user, err := u.users.Create(ctx, domain.CreateUserParams{
 		Email:        &email,
 		PasswordHash: &passwordHashPtr,
-		Role:         domain.UserRoleStudent,
+		IsAdmin:      false,
+		IsMale:       normalized.IsMale,
 		FirstName:    normalized.FirstName,
 		LastName:     normalized.LastName,
 		Patronymic:   normalized.Patronymic,
 		Phone:        normalized.Phone,
-		Gender:       normalized.Gender,
 		BirthDate:    normalized.BirthDate,
 		Address:      normalized.Address,
 		City:         normalized.City,
 		AvatarURL:    normalized.AvatarURL,
-		StudentInfo: &domain.StudentInfo{
-			BirthDate: stringFromPointer(normalized.BirthDate),
-		},
 	})
 	if err != nil {
 		if errors.Is(err, domain.ErrConflict) {
-			return domain.LoginResult{}, domain.ConflictError("Пользователь с таким email или логином уже существует")
+			return domain.LoginResult{}, domain.ConflictError("Пользователь с таким email уже существует")
 		}
 		return domain.LoginResult{}, fmt.Errorf("usecase auth register create user: %w", err)
 	}
@@ -149,7 +144,7 @@ func (u *AuthUseCase) Register(ctx context.Context, params domain.RegisterParams
 		u.audit.Log(ctx, domain.AppEventUserCreated, map[string]any{
 			"user_id":  user.ID,
 			"email":    user.Email,
-			"is_admin": user.Role == domain.UserRoleAdmin,
+			"is_admin": false,
 			"source":   "register",
 		})
 	}
@@ -245,7 +240,7 @@ func (u *AuthUseCase) LoginWithGoogle(ctx context.Context, params domain.GoogleL
 	}
 
 	if !user.IsActive {
-		return domain.LoginResult{}, fmt.Errorf("usecase auth google login inactive user: %w", domain.ErrUnauthorized)
+		return domain.LoginResult{}, domain.UnauthorizedError("Пользователь отключен")
 	}
 
 	session, err := u.createSession(ctx, user.ID, normalized.IPAddress, normalized.UserAgent)
@@ -543,10 +538,9 @@ func (u *AuthUseCase) resolveGoogleUser(ctx context.Context, identity GoogleIden
 	createdUser, err := u.users.Create(ctx, domain.CreateUserParams{
 		Email:     &email,
 		GoogleID:  &googleID,
-		Role:      u.googleDefaultRole,
+		IsAdmin:   false,
 		FirstName: identity.GivenName,
 		LastName:  identity.FamilyName,
-		Gender:    domain.GenderUnspecified,
 		AvatarURL: avatarURL,
 	})
 	if err != nil {
@@ -554,15 +548,6 @@ func (u *AuthUseCase) resolveGoogleUser(ctx context.Context, identity GoogleIden
 	}
 
 	return createdUser, nil
-}
-
-func normalizeGoogleDefaultRole(role string) domain.UserRole {
-	normalized := domain.UserRole(strings.ToLower(strings.TrimSpace(role)))
-	if normalized.IsValid() {
-		return normalized
-	}
-
-	return domain.UserRoleStudent
 }
 
 func (u *AuthUseCase) createSession(
@@ -652,7 +637,6 @@ func normalizeRegisterParams(params domain.RegisterParams) (domain.RegisterParam
 	params.BirthDate = normalizeOptionalString(params.BirthDate)
 	params.IPAddress = normalizeOptionalString(params.IPAddress)
 	params.UserAgent = normalizeOptionalString(params.UserAgent)
-	params.Gender = genderFromBoolean(params.Gender, params.IsMale)
 
 	var validation fieldValidationBuilder
 	validation.addRequired("email", params.Email, "Email")
@@ -671,14 +655,16 @@ func normalizeRegisterParams(params domain.RegisterParams) (domain.RegisterParam
 		validation.add("password", "too_short", "Пароль должен быть минимум 8 символов")
 	}
 
-	if params.Gender == "" {
-		params.Gender = domain.GenderUnspecified
-	}
-	if !params.Gender.IsValid() {
-		validation.add("gender", "invalid_enum", "Пол должен быть male, female, other или unspecified")
-	}
-
 	addDateValidation(&validation, "birth_date", params.BirthDate, "Дата рождения")
+
+	if params.Phone != nil {
+		normalized := normalizePhoneForStorage(*params.Phone)
+		if !validateTajikPhone(normalized) {
+			validation.add("phone", "invalid_phone", "Номер телефона должен быть в формате +992XXXXXXXXX (9 цифр после кода страны)")
+		} else {
+			params.Phone = &normalized
+		}
+	}
 
 	if err := validation.err(); err != nil {
 		return domain.RegisterParams{}, err
@@ -700,7 +686,6 @@ func normalizeUpdateProfileParams(params domain.UpdateProfileParams) (domain.Upd
 	params.City = normalizeOptionalString(params.City)
 	params.AvatarURL = normalizeOptionalString(params.AvatarURL)
 	params.BirthDate = normalizeOptionalString(params.BirthDate)
-	params.Gender = genderFromBoolean(params.Gender, params.IsMale)
 
 	var validation fieldValidationBuilder
 	validation.addRequired("user_id", params.UserID, "ID пользователя")
@@ -711,11 +696,17 @@ func normalizeUpdateProfileParams(params domain.UpdateProfileParams) (domain.Upd
 	if params.Password != nil {
 		validation.add("password", "forbidden", "Для смены пароля используйте /api/v1/auth/password/change")
 	}
-	if params.Gender != "" && !params.Gender.IsValid() {
-		validation.add("gender", "invalid_enum", "Пол должен быть male, female, other или unspecified")
-	}
 
 	addDateValidation(&validation, "birth_date", params.BirthDate, "Дата рождения")
+
+	if params.Phone != nil {
+		normalized := normalizePhoneForStorage(*params.Phone)
+		if !validateTajikPhone(normalized) {
+			validation.add("phone", "invalid_phone", "Номер телефона должен быть в формате +992XXXXXXXXX (9 цифр после кода страны)")
+		} else {
+			params.Phone = &normalized
+		}
+	}
 
 	if err := validation.err(); err != nil {
 		return domain.UpdateProfileParams{}, err
@@ -812,60 +803,74 @@ func normalizeResetPasswordParams(params domain.ResetPasswordParams) (domain.Res
 }
 
 func profileUpdateToUserParams(current domain.User, params domain.UpdateProfileParams) domain.UpdateUserParams {
-	studentInfo := current.StudentInfo
-	if current.Role == domain.UserRoleStudent {
-		if studentInfo == nil {
-			studentInfo = &domain.StudentInfo{}
-		}
-		copied := *studentInfo
-		if params.BirthDate != nil {
-			copied.BirthDate = *params.BirthDate
-		}
-		studentInfo = &copied
+	isMale := current.IsMale
+	if params.IsMale != nil {
+		isMale = params.IsMale
 	}
 
 	return domain.UpdateUserParams{
-		ID:           current.ID,
-		Email:        current.Email,
-		GoogleID:     current.GoogleID,
-		Password:     nil,
-		Role:         current.Role,
-		FirstName:    keepExistingString(params.FirstName, current.FirstName),
-		LastName:     keepExistingString(params.LastName, current.LastName),
-		Patronymic:   current.Patronymic,
-		Phone:        keepExistingOptionalString(params.Phone, current.Phone),
-		Gender:       current.Gender,
-		BirthDate:    keepExistingOptionalString(params.BirthDate, current.BirthDate),
-		Address:      current.Address,
-		City:         current.City,
-		AvatarURL:    current.AvatarURL,
-		IsActive:     current.IsActive,
-		EmployeeInfo: current.EmployeeInfo,
-		StudentInfo:  studentInfo,
-		GuestInfo:    current.GuestInfo,
+		ID:         current.ID,
+		Email:      current.Email,
+		GoogleID:   current.GoogleID,
+		IsAdmin:    current.IsAdmin,
+		FirstName:  keepExistingString(params.FirstName, current.FirstName),
+		LastName:   keepExistingString(params.LastName, current.LastName),
+		Patronymic: keepExistingString(params.Patronymic, current.Patronymic),
+		Phone:      keepExistingOptionalString(params.Phone, current.Phone),
+		IsMale:     isMale,
+		BirthDate:  keepExistingOptionalString(params.BirthDate, current.BirthDate),
+		Address:    current.Address,
+		City:       keepExistingOptionalString(params.City, current.City),
+		AvatarURL:  current.AvatarURL,
+		IsActive:   current.IsActive,
 	}
 }
 
 func userToPasswordUpdateParams(user domain.User) domain.UpdateUserParams {
 	return domain.UpdateUserParams{
-		ID:           user.ID,
-		Email:        user.Email,
-		GoogleID:     user.GoogleID,
-		Role:         user.Role,
-		FirstName:    user.FirstName,
-		LastName:     user.LastName,
-		Patronymic:   user.Patronymic,
-		Phone:        user.Phone,
-		Gender:       user.Gender,
-		BirthDate:    user.BirthDate,
-		Address:      user.Address,
-		City:         user.City,
-		AvatarURL:    user.AvatarURL,
-		IsActive:     user.IsActive,
-		EmployeeInfo: user.EmployeeInfo,
-		StudentInfo:  user.StudentInfo,
-		GuestInfo:    user.GuestInfo,
+		ID:         user.ID,
+		Email:      user.Email,
+		GoogleID:   user.GoogleID,
+		IsAdmin:    user.IsAdmin,
+		FirstName:  user.FirstName,
+		LastName:   user.LastName,
+		Patronymic: user.Patronymic,
+		Phone:      user.Phone,
+		IsMale:    user.IsMale,
+		BirthDate: user.BirthDate,
+		Address:   user.Address,
+		City:      user.City,
+		AvatarURL: user.AvatarURL,
+		IsActive:  user.IsActive,
 	}
+}
+
+func validateTajikPhone(phone string) bool {
+	if len(phone) != 13 || !strings.HasPrefix(phone, "+992") {
+		return false
+	}
+	for _, ch := range phone[4:] {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizePhoneForStorage(phone string) string {
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, phone)
+	if len(digits) == 9 {
+		return "+992" + digits
+	}
+	if len(digits) == 12 && strings.HasPrefix(digits, "992") {
+		return "+" + digits
+	}
+	return phone
 }
 
 func keepExistingString(next, current string) string {
@@ -882,23 +887,11 @@ func keepExistingOptionalString(next, current *string) *string {
 	return next
 }
 
-func genderFromBoolean(current domain.Gender, isMale *bool) domain.Gender {
-	if isMale == nil {
-		return current
+func isMaleFromPointer(v *bool) bool {
+	if v == nil {
+		return true // default: male
 	}
-
-	if *isMale {
-		return domain.GenderMale
-	}
-
-	return domain.GenderFemale
-}
-
-func stringFromPointer(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
+	return *v
 }
 
 func generateSessionToken() (string, error) {

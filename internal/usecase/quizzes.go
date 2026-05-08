@@ -1,26 +1,12 @@
 package usecase
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"lms-arvand-backend/internal/domain"
 )
-
-type quizRepository interface {
-	Create(ctx context.Context, params domain.CreateQuizParams) (domain.Quiz, error)
-	GetByID(ctx context.Context, quizID string) (domain.Quiz, error)
-	List(ctx context.Context, filter domain.QuizListFilter) ([]domain.Quiz, int, error)
-	Update(ctx context.Context, params domain.UpdateQuizParams) (domain.Quiz, error)
-	Archive(ctx context.Context, quizID string) error
-}
-
-type QuizUseCase struct {
-	repository quizRepository
-	audit      *AuditLogger
-}
 
 const (
 	defaultQuizPassingScore       = 80
@@ -29,304 +15,9 @@ const (
 	maxQuizRetakeCooldownDays     = 730
 )
 
-func NewQuizUseCase(repository quizRepository) *QuizUseCase {
-	return &QuizUseCase{repository: repository}
-}
-
-func (u *QuizUseCase) WithAudit(audit *AuditLogger) *QuizUseCase {
-	u.audit = audit
-	return u
-}
-
-func (u *QuizUseCase) Create(ctx context.Context, params domain.CreateQuizParams) (domain.Quiz, error) {
-	normalized, err := normalizeCreateQuizParams(params)
-	if err != nil {
-		return domain.Quiz{}, fmt.Errorf("usecase quizzes create: %w", err)
-	}
-
-	quiz, err := u.repository.Create(ctx, normalized)
-	if err != nil {
-		return domain.Quiz{}, fmt.Errorf("usecase quizzes create: %w", err)
-	}
-
-	if u.audit != nil {
-		u.audit.Log(ctx, domain.AppEventTestCreated, map[string]any{
-			"quiz_id": quiz.ID,
-			"title":   quiz.Title,
-			"status":  quiz.Status,
-		})
-	}
-
-	return quiz, nil
-}
-
-func (u *QuizUseCase) GetByID(ctx context.Context, quizID string) (domain.Quiz, error) {
-	quizID = strings.TrimSpace(quizID)
-	if quizID == "" {
-		return domain.Quiz{}, fmt.Errorf("usecase quizzes get by id: %w", domain.ErrValidation)
-	}
-
-	quiz, err := u.repository.GetByID(ctx, quizID)
-	if err != nil {
-		return domain.Quiz{}, fmt.Errorf("usecase quizzes get by id: %w", err)
-	}
-	if quiz.Status == domain.QuizStatusArchived {
-		return domain.Quiz{}, fmt.Errorf("usecase quizzes get by id archived: %w", domain.ErrNotFound)
-	}
-
-	return quiz, nil
-}
-
-func (u *QuizUseCase) List(ctx context.Context, filter domain.QuizListFilter) ([]domain.Quiz, int, error) {
-	normalized, err := normalizeQuizListFilter(filter)
-	if err != nil {
-		return nil, 0, fmt.Errorf("usecase quizzes list: %w", err)
-	}
-
-	quizzes, total, err := u.repository.List(ctx, normalized)
-	if err != nil {
-		return nil, 0, fmt.Errorf("usecase quizzes list: %w", err)
-	}
-
-	return quizzes, total, nil
-}
-
-func (u *QuizUseCase) Update(ctx context.Context, params domain.UpdateQuizParams) (domain.Quiz, error) {
-	normalized, err := normalizeUpdateQuizParams(params)
-	if err != nil {
-		return domain.Quiz{}, fmt.Errorf("usecase quizzes update: %w", err)
-	}
-
-	quiz, err := u.repository.Update(ctx, normalized)
-	if err != nil {
-		return domain.Quiz{}, fmt.Errorf("usecase quizzes update: %w", err)
-	}
-
-	if u.audit != nil {
-		u.audit.Log(ctx, domain.AppEventTestUpdated, map[string]any{
-			"quiz_id": quiz.ID,
-			"title":   quiz.Title,
-			"status":  quiz.Status,
-		})
-	}
-
-	return quiz, nil
-}
-
-func (u *QuizUseCase) Archive(ctx context.Context, quizID string) error {
-	quizID = strings.TrimSpace(quizID)
-	if quizID == "" {
-		return fmt.Errorf("usecase quizzes archive: %w", domain.ErrValidation)
-	}
-
-	if err := u.repository.Archive(ctx, quizID); err != nil {
-		return fmt.Errorf("usecase quizzes archive: %w", err)
-	}
-
-	if u.audit != nil {
-		u.audit.Log(ctx, domain.AppEventTestDeleted, map[string]any{
-			"quiz_id": quizID,
-		})
-	}
-
-	return nil
-}
-
-func normalizeCreateQuizParams(params domain.CreateQuizParams) (domain.CreateQuizParams, error) {
-	params.Category = normalizeOptionalString(params.Category)
-
-	var validation fieldValidationBuilder
-	validation.addRequiredMultiLang("title", params.Title, "Название теста")
-
-	if params.Status == "" {
-		params.Status = domain.QuizStatusDraft
-	}
-
-	if !params.Status.IsValid() {
-		validation.add("status", "invalid_enum", "Статус теста должен быть draft, published или archived")
-	}
-
-	if err := normalizePlatforms(&params.Platforms); err != nil {
-		validation.add("platforms", "invalid_enum", "Платформа должна быть web, mobile или telegram")
-	}
-
-	if params.TimeLimitMinutes != nil && *params.TimeLimitMinutes <= 0 {
-		validation.add("time_limit_minutes", "must_be_positive", "Лимит времени должен быть больше 0")
-	}
-
-	questions, err := normalizeQuestionPayloads(params.Questions)
-	if err != nil {
-		return domain.CreateQuizParams{}, err
-	}
-	params.Questions = questions
-
-	passingScore, passingPoints, maxAttempts, retakeCooldownDays := normalizeQuizScoringAndAttempts(
-		"passing_points",
-		params.PassingScore,
-		params.PassingPoints,
-		params.MaxAttempts,
-		params.RetakeCooldownDays,
-		questions,
-		&validation,
-	)
-	params.PassingScore = passingScore
-	params.PassingPoints = passingPoints
-	params.MaxAttempts = maxAttempts
-	params.RetakeCooldownDays = retakeCooldownDays
-
-	if err := validation.err(); err != nil {
-		return domain.CreateQuizParams{}, err
-	}
-
-	return params, nil
-}
-
-func normalizeUpdateQuizParams(params domain.UpdateQuizParams) (domain.UpdateQuizParams, error) {
-	params.ID = strings.TrimSpace(params.ID)
-	params.Category = normalizeOptionalString(params.Category)
-
-	var validation fieldValidationBuilder
-	if params.ID == "" {
-		validation.add("id", "required", "ID теста обязателен")
-	}
-	validation.addRequiredMultiLang("title", params.Title, "Название теста")
-
-	if !params.Status.IsValid() {
-		validation.add("status", "invalid_enum", "Статус теста должен быть draft, published или archived")
-	}
-
-	if err := normalizePlatforms(&params.Platforms); err != nil {
-		validation.add("platforms", "invalid_enum", "Платформа должна быть web, mobile или telegram")
-	}
-
-	if params.TimeLimitMinutes != nil && *params.TimeLimitMinutes <= 0 {
-		validation.add("time_limit_minutes", "must_be_positive", "Лимит времени должен быть больше 0")
-	}
-
-	questions, err := normalizeQuestionPayloads(params.Questions)
-	if err != nil {
-		return domain.UpdateQuizParams{}, err
-	}
-	params.Questions = questions
-
-	passingScore, passingPoints, maxAttempts, retakeCooldownDays := normalizeQuizScoringAndAttempts(
-		"passing_points",
-		params.PassingScore,
-		params.PassingPoints,
-		params.MaxAttempts,
-		params.RetakeCooldownDays,
-		questions,
-		&validation,
-	)
-	params.PassingScore = passingScore
-	params.PassingPoints = passingPoints
-	params.MaxAttempts = maxAttempts
-	params.RetakeCooldownDays = retakeCooldownDays
-
-	if err := validation.err(); err != nil {
-		return domain.UpdateQuizParams{}, err
-	}
-
-	return params, nil
-}
-
-func normalizeQuizScoringAndAttempts(
-	passingPointsField string,
-	passingScore int,
-	passingPoints float64,
-	maxAttempts int,
-	retakeCooldownDays int,
-	questions []domain.QuestionPayload,
-	validation *fieldValidationBuilder,
-) (int, float64, int, int) {
-	if passingScore <= 0 {
-		passingScore = defaultQuizPassingScore
-	}
-	validation.addIntRange("passing_score", passingScore, 0, 100, "Процент прохождения")
-
-	if passingPoints < 0 {
-		validation.add(passingPointsField, "must_be_non_negative", "Баллы для прохождения не могут быть меньше 0")
-	}
-
-	totalPoints := totalQuestionPayloadPoints(questions)
-	if passingPoints > 0 && totalPoints > 0 && passingPoints > totalPoints {
-		validation.add(passingPointsField, "too_high", fmt.Sprintf(
-			"Баллы для прохождения не могут быть больше максимального балла теста (%.2f)",
-			totalPoints,
-		))
-	}
-
-	if passingPoints <= 0 && totalPoints > 0 {
-		passingPoints = roundToTwo(totalPoints * float64(passingScore) / 100)
-	}
-
-	if maxAttempts <= 0 {
-		maxAttempts = defaultQuizMaxAttempts
-	}
-
-	if retakeCooldownDays <= 0 {
-		retakeCooldownDays = defaultQuizRetakeCooldownDays
-	}
-	if retakeCooldownDays > maxQuizRetakeCooldownDays {
-		validation.add("retake_cooldown_days", "out_of_range", "Пауза перед новой сдачей не может быть больше 730 дней")
-	}
-
-	return passingScore, roundToTwo(passingPoints), maxAttempts, retakeCooldownDays
-}
-
-func totalQuestionPayloadPoints(questions []domain.QuestionPayload) float64 {
-	total := 0.0
-	for _, question := range questions {
-		total += question.Points
-	}
-	return roundToTwo(total)
-}
-
-func normalizeQuizListFilter(filter domain.QuizListFilter) (domain.QuizListFilter, error) {
-	filter.Search = strings.TrimSpace(filter.Search)
-
-	if filter.Status != nil {
-		status := domain.QuizStatus(strings.TrimSpace(string(*filter.Status)))
-		if !status.IsValid() {
-			return domain.QuizListFilter{}, fmt.Errorf("status filter is invalid: %w", domain.ErrValidation)
-		}
-		if status == domain.QuizStatusArchived {
-			return domain.QuizListFilter{}, fmt.Errorf("archived quizzes are not available: %w", domain.ErrValidation)
-		}
-		filter.Status = &status
-	}
-	filter.IncludeArchived = false
-
-	if filter.Category != nil {
-		filter.Category = normalizeOptionalString(filter.Category)
-	}
-
-	if filter.Platform != nil {
-		platform := domain.Platform(strings.TrimSpace(string(*filter.Platform)))
-		if !platform.IsValid() {
-			return domain.QuizListFilter{}, fmt.Errorf("platform filter is invalid: %w", domain.ErrValidation)
-		}
-		filter.Platform = &platform
-	}
-
-	if filter.Limit <= 0 {
-		filter.Limit = 20
-	}
-
-	if filter.Limit > 100 {
-		filter.Limit = 100
-	}
-
-	if filter.Offset < 0 {
-		return domain.QuizListFilter{}, fmt.Errorf("offset must be non-negative: %w", domain.ErrValidation)
-	}
-
-	return filter, nil
-}
-
+// normalizeQuestionPayloads validates and normalizes a slice of question payloads.
 func normalizeQuestionPayloads(questions []domain.QuestionPayload) ([]domain.QuestionPayload, error) {
 	if len(questions) == 0 {
-		// Draft quizzes can be created empty and filled later from the admin UI.
 		return nil, nil
 	}
 
@@ -393,7 +84,7 @@ func validateQuestionConfig(field string, questionType domain.QuestionType, conf
 
 	var validation fieldValidationBuilder
 	switch questionType {
-	case domain.QuestionTypeSingleChoice, domain.QuestionTypeImageChoice:
+	case domain.QuestionTypeSingleChoice:
 		correctCount, optionsOK := validateChoiceOptions(payload.Options)
 		if !optionsOK {
 			validation.add(field+".options", "required", "Добавьте варианты ответа с ID")
@@ -452,4 +143,34 @@ func validateChoiceOptions(options []struct {
 	}
 
 	return correctCount, true
+}
+
+func normalizeQuizScoringAndAttempts(
+	passingScore int,
+	quizMinutes int,
+	maxAttempts int,
+	retakeCooldownDays int,
+	validation *fieldValidationBuilder,
+) (int, int, int, int) {
+	if passingScore <= 0 {
+		passingScore = defaultQuizPassingScore
+	}
+	validation.addIntRange("quiz_pass_percent", passingScore, 0, 100, "Процент прохождения")
+
+	if quizMinutes < 0 {
+		quizMinutes = 0
+	}
+
+	if maxAttempts <= 0 {
+		maxAttempts = defaultQuizMaxAttempts
+	}
+
+	if retakeCooldownDays <= 0 {
+		retakeCooldownDays = defaultQuizRetakeCooldownDays
+	}
+	if retakeCooldownDays > maxQuizRetakeCooldownDays {
+		validation.add("retake_cooldown_days", "out_of_range", "Пауза перед новой сдачей не может быть больше 730 дней")
+	}
+
+	return passingScore, quizMinutes, maxAttempts, retakeCooldownDays
 }

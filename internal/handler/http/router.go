@@ -5,7 +5,6 @@ import (
 	nethttp "net/http"
 	"strings"
 
-	"lms-arvand-backend/internal/domain"
 	"lms-arvand-backend/internal/handler/http/middleware"
 
 	"github.com/go-chi/chi/v5"
@@ -25,7 +24,6 @@ func NewRouter(
 	certificatesHandler *CertificatesHandler,
 	dashboardHandler *DashboardHandler,
 	coursePackagesHandler *CoursePackagesHandler,
-	courseTestsHandler *CourseTestsHandler,
 	courseModulesHandler *CourseModulesHandler,
 	contentBlocksHandler *ContentBlocksHandler,
 	reviewsHandler *ReviewsHandler,
@@ -95,39 +93,39 @@ func NewRouter(
 			if dashboardHandler != nil {
 				protected.Get("/dashboard", dashboardHandler.GetDashboard)
 				protected.Get("/dashboard/me", dashboardHandler.GetMyDashboard)
-				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Get("/dashboard/admin", dashboardHandler.GetAdminDashboard)
+				protected.With(middleware.RequireAdmin()).Get("/dashboard/admin", dashboardHandler.GetAdminDashboard)
 			}
 
 			if coursesHandler != nil {
-				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/courses", coursesHandler.CreateCourse)
-				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/courses/", coursesHandler.CreateCourse)
-				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Put("/courses/{courseID}", coursesHandler.UpdateCourse)
-				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Delete("/courses/{courseID}", coursesHandler.ArchiveCourse)
+				protected.With(middleware.RequireAdmin()).Post("/courses", coursesHandler.CreateCourse)
+				protected.With(middleware.RequireAdmin()).Post("/courses/", coursesHandler.CreateCourse)
+				protected.With(middleware.RequireAdmin()).Put("/courses/{courseID}", coursesHandler.UpdateCourse)
+				protected.With(middleware.RequireAdmin()).Delete("/courses/{courseID}", coursesHandler.ArchiveCourse)
 			}
 
 			if coursePackagesHandler != nil {
-				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).
+				protected.With(middleware.RequireAdmin()).
 					Post("/course-packages", coursePackagesHandler.CreateCoursePackage)
 			}
 
 			if quizzesHandler != nil {
 				protected.Get("/quizzes", quizzesHandler.ListQuizzes)
 				protected.Get("/quizzes/", quizzesHandler.ListQuizzes)
-				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/quizzes", quizzesHandler.CreateQuiz)
-				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/quizzes/", quizzesHandler.CreateQuiz)
-				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Put("/quizzes/{quizID}", quizzesHandler.UpdateQuiz)
-				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Delete("/quizzes/{quizID}", quizzesHandler.ArchiveQuiz)
+				protected.With(middleware.RequireAdmin()).Get("/quizzes/{quizID}/answers", quizzesHandler.GetQuizByIDWithAnswers)
+				protected.With(middleware.RequireAdmin()).Post("/quizzes", quizzesHandler.CreateQuiz)
+				protected.With(middleware.RequireAdmin()).Post("/quizzes/", quizzesHandler.CreateQuiz)
+				protected.With(middleware.RequireAdmin()).Put("/quizzes/{quizID}", quizzesHandler.UpdateQuiz)
+				protected.With(middleware.RequireAdmin()).Delete("/quizzes/{quizID}", quizzesHandler.ArchiveQuiz)
+			}
 
-				if attemptsHandler != nil {
-					protected.Post("/quizzes/{quizID}/attempts", attemptsHandler.SubmitAttempt)
-				}
+			if attemptsHandler != nil && coursesHandler != nil {
+				protected.Post("/courses/{courseID}/attempts", attemptsHandler.SubmitAttempt)
 			}
 
 			if attemptsHandler != nil {
 				protected.Route("/attempts", func(attempts chi.Router) {
 					attempts.Get("/", attemptsHandler.ListAttempts)
 					attempts.Get("/{attemptID}", attemptsHandler.GetAttemptByID)
-					attempts.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/{attemptID}/review", attemptsHandler.ReviewAttempt)
 				})
 			}
 
@@ -136,24 +134,24 @@ func NewRouter(
 					enrollments.Get("/", enrollmentsHandler.ListEnrollments)
 					enrollments.Post("/", enrollmentsHandler.CreateEnrollment)
 					enrollments.Get("/{enrollmentID}", enrollmentsHandler.GetEnrollmentByID)
-					enrollments.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/{enrollmentID}/complete", enrollmentsHandler.CompleteEnrollment)
+					enrollments.With(middleware.RequireAdmin()).Post("/{enrollmentID}/complete", enrollmentsHandler.CompleteEnrollment)
 				})
 			}
 
 			if certificatesHandler != nil {
 				protected.Get("/certificates", certificatesHandler.ListCertificates)
 				protected.Get("/certificates/", certificatesHandler.ListCertificates)
-				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/certificates", certificatesHandler.CreateCertificate)
-				protected.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/certificates/", certificatesHandler.CreateCertificate)
+				protected.With(middleware.RequireAdmin()).Post("/certificates", certificatesHandler.CreateCertificate)
+				protected.With(middleware.RequireAdmin()).Post("/certificates/", certificatesHandler.CreateCertificate)
 			}
 
 			if courseModulesHandler != nil {
 				protected.Route("/course-modules", func(modules chi.Router) {
 					modules.Get("/", courseModulesHandler.ListCourseModules)
 					modules.Get("/{moduleID}", courseModulesHandler.GetCourseModuleByID)
-					modules.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/", courseModulesHandler.CreateCourseModule)
-					modules.With(middleware.RequireRoles(domain.UserRoleAdmin)).Put("/{moduleID}", courseModulesHandler.UpdateCourseModule)
-					modules.With(middleware.RequireRoles(domain.UserRoleAdmin)).Delete("/{moduleID}", courseModulesHandler.DeleteCourseModule)
+					modules.With(middleware.RequireAdmin()).Post("/", courseModulesHandler.CreateCourseModule)
+					modules.With(middleware.RequireAdmin()).Put("/{moduleID}", courseModulesHandler.UpdateCourseModule)
+					modules.With(middleware.RequireAdmin()).Delete("/{moduleID}", courseModulesHandler.DeleteCourseModule)
 				})
 			}
 
@@ -161,9 +159,9 @@ func NewRouter(
 				protected.Route("/content-blocks", func(blocks chi.Router) {
 					blocks.Get("/", contentBlocksHandler.ListContentBlocks)
 					blocks.Get("/{blockID}", contentBlocksHandler.GetContentBlockByID)
-					blocks.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/", contentBlocksHandler.CreateContentBlock)
-					blocks.With(middleware.RequireRoles(domain.UserRoleAdmin)).Put("/{blockID}", contentBlocksHandler.UpdateContentBlock)
-					blocks.With(middleware.RequireRoles(domain.UserRoleAdmin)).Delete("/{blockID}", contentBlocksHandler.DeleteContentBlock)
+					blocks.With(middleware.RequireAdmin()).Post("/", contentBlocksHandler.CreateContentBlock)
+					blocks.With(middleware.RequireAdmin()).Put("/{blockID}", contentBlocksHandler.UpdateContentBlock)
+					blocks.With(middleware.RequireAdmin()).Delete("/{blockID}", contentBlocksHandler.DeleteContentBlock)
 				})
 			}
 
@@ -172,7 +170,7 @@ func NewRouter(
 					reviews.Get("/", reviewsHandler.ListReviews)
 					reviews.Post("/", reviewsHandler.CreateReview)
 					reviews.Get("/{reviewID}", reviewsHandler.GetReviewByID)
-					reviews.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/{reviewID}/moderate", reviewsHandler.ModerateReview)
+					reviews.With(middleware.RequireAdmin()).Post("/{reviewID}/moderate", reviewsHandler.ModerateReview)
 				})
 			}
 
@@ -181,12 +179,12 @@ func NewRouter(
 					notifications.Get("/", notificationsHandler.ListNotifications)
 					notifications.Get("/{notificationID}", notificationsHandler.GetNotificationByID)
 					notifications.Post("/{notificationID}/read", notificationsHandler.MarkRead)
-					notifications.With(middleware.RequireRoles(domain.UserRoleAdmin)).Post("/", notificationsHandler.CreateNotification)
+					notifications.With(middleware.RequireAdmin()).Post("/", notificationsHandler.CreateNotification)
 				})
 			}
 
 			protected.Group(func(admin chi.Router) {
-				admin.Use(middleware.RequireRoles(domain.UserRoleAdmin))
+				admin.Use(middleware.RequireAdmin())
 
 				if usersHandler != nil {
 					admin.With(middleware.RequireSuperAdmin()).Route("/users", func(users chi.Router) {
@@ -195,15 +193,6 @@ func NewRouter(
 						users.Get("/{userID}", usersHandler.GetUserByID)
 						users.Put("/{userID}", usersHandler.UpdateUser)
 						users.Delete("/{userID}", usersHandler.DeactivateUser)
-					})
-				}
-
-				if courseTestsHandler != nil {
-					admin.Route("/course-tests", func(courseTests chi.Router) {
-						courseTests.Get("/", courseTestsHandler.ListCourseTests)
-						courseTests.Post("/", courseTestsHandler.CreateCourseTest)
-						courseTests.Delete("/", courseTestsHandler.DeleteCourseTest)
-						courseTests.Delete("/{courseTestID}", courseTestsHandler.DeleteCourseTestByID)
 					})
 				}
 

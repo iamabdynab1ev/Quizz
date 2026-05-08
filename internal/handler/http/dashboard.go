@@ -33,7 +33,7 @@ func (h *DashboardHandler) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 
-	if identity.User.Role == domain.UserRoleAdmin {
+	if identity.User.IsAdmin || identity.User.IsSuperAdmin {
 		h.GetAdminDashboard(w, r)
 		return
 	}

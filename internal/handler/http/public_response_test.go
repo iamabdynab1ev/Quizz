@@ -11,7 +11,7 @@ import (
 
 func TestPublicResponsesDoNotExposeInternalFields(t *testing.T) {
 	now := time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC)
-	email := "student@local.test"
+	email := "client@local.test"
 
 	courseBody := mustMarshalString(t, toCourseResponse(domain.Course{
 		ID:                      "course-1",
@@ -28,22 +28,19 @@ func TestPublicResponsesDoNotExposeInternalFields(t *testing.T) {
 	assertJSONDoesNotContain(t, courseBody,
 		"status",
 		"platforms",
-		"certificate_enabled",
 		"certificate_passing_score",
 		"reviews_enabled",
 	)
 
-	quizBody := mustMarshalString(t, toQuizResponse(domain.Quiz{
-		ID:               "quiz-1",
-		Title:            domain.MultiLangText{RU: "Тест", TJ: "Тест"},
-		Description:      domain.MultiLangText{RU: "Описание", TJ: "Тавсиф"},
-		Status:           domain.QuizStatusPublished,
-		Platforms:        []domain.Platform{domain.PlatformWeb},
-		PassingScore:     70,
-		MaxAttempts:      3,
-		ShuffleQuestions: true,
-		ShowResults:      true,
-		AllowRetry:       true,
+	quizBody := mustMarshalString(t, toCourseAsQuizResponse(domain.Course{
+		ID:                 "quiz-1",
+		Title:              domain.MultiLangText{RU: "Тест", TJ: "Тест"},
+		Description:        domain.MultiLangText{RU: "Описание", TJ: "Тавсиф"},
+		Status:             domain.CourseStatusPublished,
+		Platforms:          []domain.Platform{domain.PlatformWeb},
+		QuizPassPercent:    70,
+		MaxAttempts:        3,
+		RetakeCooldownDays: 30,
 		Questions: []domain.Question{{
 			ID:       "question-1",
 			Position: 1,
@@ -63,10 +60,11 @@ func TestPublicResponsesDoNotExposeInternalFields(t *testing.T) {
 		}},
 		CreatedAt: now,
 		UpdatedAt: now,
-	}))
+	}, false))
 	assertJSONDoesNotContain(t, quizBody,
 		"status",
 		"platforms",
+		"passing_points",
 		"shuffle_questions",
 		"show_results",
 		"is_correct",
@@ -76,11 +74,9 @@ func TestPublicResponsesDoNotExposeInternalFields(t *testing.T) {
 
 	attemptBody := mustMarshalString(t, toAttemptResponse(domain.Attempt{
 		ID:                "attempt-1",
-		QuizID:            "quiz-1",
-		StartedAt:         now,
+		CourseID:          "course-1",
 		QuestionsSnapshot: json.RawMessage(`[{"config":{"options":[{"id":"a","is_correct":true}]}}]`),
 		AnswersData:       json.RawMessage(`[{"question_id":"question-1"}]`),
-		NeedsReview:       true,
 	}))
 	assertJSONDoesNotContain(t, attemptBody,
 		"questions_snapshot",
@@ -92,10 +88,10 @@ func TestPublicResponsesDoNotExposeInternalFields(t *testing.T) {
 	userBody := mustMarshalString(t, toUserResponse(domain.User{
 		ID:        "user-1",
 		Email:     &email,
-		Role:      domain.UserRoleStudent,
+		IsAdmin:   false,
+		IsMale:    func() *bool { v := true; return &v }(),
 		FirstName: "Ali",
 		LastName:  "Karimov",
-		Gender:    domain.GenderMale,
 		IsActive:  true,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -105,17 +101,48 @@ func TestPublicResponsesDoNotExposeInternalFields(t *testing.T) {
 	superAdminBody := mustMarshalString(t, toUserResponse(domain.User{
 		ID:           "super-admin-1",
 		Email:        &email,
-		Role:         domain.UserRoleAdmin,
+		IsAdmin:      true,
 		IsSuperAdmin: true,
 		FirstName:    "System",
 		LastName:     "Admin",
-		Gender:       domain.GenderUnspecified,
 		IsActive:     true,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}))
 	if !strings.Contains(superAdminBody, `"is_super_admin":true`) {
 		t.Fatalf("super admin response must expose is_super_admin=true, got %s", superAdminBody)
+	}
+}
+
+func TestAdminQuizResponseIncludesAnswerKeys(t *testing.T) {
+	now := time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC)
+	body := mustMarshalString(t, toCourseAsQuizResponse(domain.Course{
+		ID:              "quiz-1",
+		Title:           domain.MultiLangText{RU: "Test", TJ: "Test"},
+		Description:     domain.MultiLangText{RU: "Description", TJ: "Description"},
+		QuizPassPercent: 70,
+		MaxAttempts:     3,
+		Questions: []domain.Question{{
+			ID:       "question-1",
+			Position: 1,
+			Type:     domain.QuestionTypeSingleChoice,
+			Prompt:   domain.MultiLangText{RU: "Question", TJ: "Question"},
+			Points:   1,
+			Required: true,
+			Config: json.RawMessage(`{
+				"options":[
+					{"id":"a","text":{"ru":"A","tj":"A"},"is_correct":true},
+					{"id":"b","text":{"ru":"B","tj":"B"},"is_correct":false}
+				]
+			}`),
+			CreatedAt: now,
+		}},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, true))
+
+	if !strings.Contains(body, `"is_correct":true`) {
+		t.Fatalf("admin quiz response must include answer keys, got %s", body)
 	}
 }
 

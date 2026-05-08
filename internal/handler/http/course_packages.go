@@ -9,7 +9,7 @@ import (
 )
 
 type coursePackageUseCase interface {
-	Create(ctx context.Context, params domain.CreateCoursePackageParams) (domain.CoursePackage, error)
+	Create(ctx context.Context, params domain.CreateCoursePackageParams) (domain.Course, error)
 }
 
 type CoursePackagesHandler struct {

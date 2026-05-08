@@ -8,7 +8,7 @@ import (
 )
 
 type coursePackageRepository interface {
-	Create(ctx context.Context, params domain.CreateCoursePackageParams) (domain.CoursePackage, error)
+	Create(ctx context.Context, params domain.CreateCoursePackageParams) (domain.Course, error)
 }
 
 type CoursePackageUseCase struct {
@@ -25,63 +25,26 @@ func (u *CoursePackageUseCase) WithAudit(audit *AuditLogger) *CoursePackageUseCa
 	return u
 }
 
-func (u *CoursePackageUseCase) Create(ctx context.Context, params domain.CreateCoursePackageParams) (domain.CoursePackage, error) {
-	normalized, err := normalizeCreateCoursePackageParams(params)
+func (u *CoursePackageUseCase) Create(ctx context.Context, params domain.CreateCoursePackageParams) (domain.Course, error) {
+	course, err := normalizeCreateCourseParams(params.Course)
 	if err != nil {
-		return domain.CoursePackage{}, fmt.Errorf("usecase course packages create: %w", err)
+		return domain.Course{}, fmt.Errorf("usecase course packages create: %w", err)
 	}
 
-	created, err := u.repository.Create(ctx, normalized)
+	params.Course = course
+
+	created, err := u.repository.Create(ctx, params)
 	if err != nil {
-		return domain.CoursePackage{}, fmt.Errorf("usecase course packages create: %w", err)
+		return domain.Course{}, fmt.Errorf("usecase course packages create: %w", err)
 	}
 
 	if u.audit != nil {
 		u.audit.Log(ctx, domain.AppEventCourseCreated, map[string]any{
-			"course_id": created.Course.ID,
-			"quiz_id":   created.Quiz.ID,
-			"title":     created.Course.Title,
-			"status":    created.Course.Status,
-		})
-		u.audit.Log(ctx, domain.AppEventTestCreated, map[string]any{
-			"course_id": created.Course.ID,
-			"quiz_id":   created.Quiz.ID,
-			"title":     created.Quiz.Title,
-			"status":    created.Quiz.Status,
+			"course_id": created.ID,
+			"title":     created.Title,
+			"status":    created.Status,
 		})
 	}
 
 	return created, nil
-}
-
-func normalizeCreateCoursePackageParams(params domain.CreateCoursePackageParams) (domain.CreateCoursePackageParams, error) {
-	course, err := normalizeCreateCourseParams(params.Course)
-	if err != nil {
-		return domain.CreateCoursePackageParams{}, err
-	}
-
-	if params.Quiz.Title.IsZero() {
-		params.Quiz.Title = course.Title
-	}
-	if params.Quiz.Description.IsZero() {
-		params.Quiz.Description = course.Description
-	}
-	if params.Quiz.Status == "" {
-		params.Quiz.Status = domain.QuizStatusDraft
-	}
-
-	quiz, err := normalizeCreateQuizParams(params.Quiz)
-	if err != nil {
-		return domain.CreateCoursePackageParams{}, err
-	}
-
-	if params.LinkPosition <= 0 {
-		params.LinkPosition = 1
-	}
-
-	return domain.CreateCoursePackageParams{
-		Course:       course,
-		Quiz:         quiz,
-		LinkPosition: params.LinkPosition,
-	}, nil
 }

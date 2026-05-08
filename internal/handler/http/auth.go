@@ -253,6 +253,11 @@ func (h *AuthHandler) ChangePassword(w nethttp.ResponseWriter, r *nethttp.Reques
 		return
 	}
 
+	if identity.User.PasswordHash == nil {
+		writeError(w, nethttp.StatusBadRequest, "no_password", "У этого аккаунта нет пароля. Войдите через Google.")
+		return
+	}
+
 	sessionToken, _ := middleware.CurrentSessionToken(r.Context())
 
 	var request struct {

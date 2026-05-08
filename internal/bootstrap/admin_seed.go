@@ -92,12 +92,11 @@ func buildCreateAdminParams(cfg config.SeedAdminConfig) domain.CreateUserParams 
 	return domain.CreateUserParams{
 		Email:        &email,
 		Password:     &password,
-		Role:         domain.UserRoleAdmin,
+		IsAdmin:      true,
 		IsSuperAdmin: true,
 		FirstName:    cfg.FirstName,
 		LastName:     cfg.LastName,
 		Patronymic:   cfg.Patronymic,
-		Gender:       domain.GenderUnspecified,
 	}
 }
 
@@ -105,30 +104,23 @@ func buildUpdateAdminParams(existing domain.User, cfg config.SeedAdminConfig) do
 	email := cfg.Email
 	password := cfg.Password
 	isSuperAdmin := true
-	gender := existing.Gender
-	if !gender.IsValid() {
-		gender = domain.GenderUnspecified
-	}
 
 	return domain.UpdateUserParams{
 		ID:           existing.ID,
 		Email:        &email,
 		GoogleID:     existing.GoogleID,
 		Password:     &password,
-		Role:         domain.UserRoleAdmin,
+		IsAdmin:      true,
 		IsSuperAdmin: &isSuperAdmin,
 		FirstName:    cfg.FirstName,
 		LastName:     cfg.LastName,
 		Patronymic:   cfg.Patronymic,
 		Phone:        existing.Phone,
-		Gender:       gender,
+		IsMale:       existing.IsMale,
 		BirthDate:    existing.BirthDate,
 		Address:      existing.Address,
 		City:         existing.City,
 		AvatarURL:    existing.AvatarURL,
 		IsActive:     true,
-		EmployeeInfo: nil,
-		StudentInfo:  nil,
-		GuestInfo:    nil,
 	}
 }

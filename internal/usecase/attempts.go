@@ -14,13 +14,12 @@ import (
 )
 
 type attemptRepository interface {
-	GetQuizForAttempt(ctx context.Context, quizID string) (domain.Quiz, error)
-	GetUserQuizAttemptWindow(ctx context.Context, quizID, userID string, since *time.Time) (domain.AttemptWindow, error)
+	GetCourseForAttempt(ctx context.Context, courseID string) (domain.Course, error)
+	GetUserCourseAttemptWindow(ctx context.Context, courseID, userID string, since *time.Time) (domain.AttemptWindow, error)
 	UserHasCourseCertificate(ctx context.Context, courseID, userID string) (bool, error)
 	CreateAttempt(ctx context.Context, params domain.CreateAttemptRecordParams) (domain.Attempt, error)
 	GetAttemptByID(ctx context.Context, attemptID string) (domain.Attempt, error)
 	ListAttempts(ctx context.Context, filter domain.AttemptListFilter) ([]domain.Attempt, int, error)
-	UpdateReview(ctx context.Context, params domain.ReviewAttemptParams) (domain.Attempt, error)
 }
 
 type attemptEnrollmentLookup interface {
@@ -67,28 +66,28 @@ func (u *AttemptUseCase) Submit(ctx context.Context, params domain.SubmitAttempt
 		return domain.Attempt{}, fmt.Errorf("usecase attempts submit: %w", err)
 	}
 
-	quiz, err := u.repository.GetQuizForAttempt(ctx, normalized.QuizID)
+	course, err := u.repository.GetCourseForAttempt(ctx, normalized.CourseID)
 	if err != nil {
-		return domain.Attempt{}, fmt.Errorf("usecase attempts submit quiz load: %w", err)
+		return domain.Attempt{}, fmt.Errorf("usecase attempts submit course load: %w", err)
 	}
 
-	if err := u.ensureUserCanSubmitQuiz(ctx, quiz, normalized.UserID); err != nil {
+	if err := u.ensureUserCanSubmit(ctx, course, normalized.UserID); err != nil {
 		return domain.Attempt{}, fmt.Errorf("usecase attempts submit access check: %w", err)
 	}
 
 	finishedAt := u.now().UTC()
-	attemptSince := attemptWindowStart(finishedAt, quiz.RetakeCooldownDays)
-	attemptWindow, err := u.repository.GetUserQuizAttemptWindow(ctx, normalized.QuizID, normalized.UserID, attemptSince)
+	attemptSince := attemptWindowStart(finishedAt, course.RetakeCooldownDays)
+	attemptWindow, err := u.repository.GetUserCourseAttemptWindow(ctx, normalized.CourseID, normalized.UserID, attemptSince)
 	if err != nil {
 		return domain.Attempt{}, fmt.Errorf("usecase attempts submit count attempts: %w", err)
 	}
 
-	maxAttempts := effectiveMaxAttempts(quiz.MaxAttempts)
+	maxAttempts := effectiveMaxAttempts(course.MaxAttempts)
 	if attemptWindow.Count >= maxAttempts {
-		return domain.Attempt{}, attemptLimitExceededError(attemptWindow, quiz.RetakeCooldownDays)
+		return domain.Attempt{}, attemptLimitExceededError(attemptWindow, course.RetakeCooldownDays)
 	}
 
-	questionsSnapshot, err := json.Marshal(quiz.Questions)
+	questionsSnapshot, err := json.Marshal(course.Questions)
 	if err != nil {
 		return domain.Attempt{}, fmt.Errorf("usecase attempts submit marshal questions snapshot: %w", err)
 	}
@@ -98,21 +97,22 @@ func (u *AttemptUseCase) Submit(ctx context.Context, params domain.SubmitAttempt
 		return domain.Attempt{}, fmt.Errorf("usecase attempts submit marshal answers data: %w", err)
 	}
 
-	totalEarned, totalMax, needsReview := evaluateAttempt(quiz, normalized.Answers)
+	totalEarned, totalMax := evaluateAttempt(course, normalized.Answers)
 	scorePercent := 0.0
 	if totalMax > 0 {
 		scorePercent = roundToTwo(totalEarned / totalMax * 100)
 	}
 
-	passingPoints := effectivePassingPoints(quiz, totalMax)
-	passed := !needsReview && totalEarned >= passingPoints
+	passingPercent := effectivePassingPercent(course)
+	passed := scorePercent >= passingPercent
+
 	startedAt := finishedAt
 	if normalized.StartedAt != nil {
 		startedAt = normalized.StartedAt.UTC()
 	}
 
 	attempt, err := u.repository.CreateAttempt(ctx, domain.CreateAttemptRecordParams{
-		QuizID:            normalized.QuizID,
+		CourseID:          normalized.CourseID,
 		UserID:            normalized.UserID,
 		StartedAt:         startedAt,
 		FinishedAt:        finishedAt,
@@ -122,7 +122,6 @@ func (u *AttemptUseCase) Submit(ctx context.Context, params domain.SubmitAttempt
 		TotalMax:          roundToTwo(totalMax),
 		ScorePercent:      scorePercent,
 		Passed:            passed,
-		NeedsReview:       needsReview,
 	})
 	if err != nil {
 		return domain.Attempt{}, fmt.Errorf("usecase attempts submit create attempt: %w", err)
@@ -130,34 +129,29 @@ func (u *AttemptUseCase) Submit(ctx context.Context, params domain.SubmitAttempt
 
 	if u.audit != nil {
 		u.audit.Log(ctx, domain.AppEventAttemptFinished, map[string]any{
-			"attempt_id":     attempt.ID,
-			"quiz_id":        attempt.QuizID,
-			"user_id":        attempt.UserID,
-			"score_percent":  attempt.ScorePercent,
-			"total_earned":   attempt.TotalEarned,
-			"passing_points": passingPoints,
-			"passed":         attempt.Passed,
-			"needs_review":   attempt.NeedsReview,
+			"attempt_id":      attempt.ID,
+			"course_id":       attempt.CourseID,
+			"user_id":         attempt.UserID,
+			"score_percent":   attempt.ScorePercent,
+			"total_earned":    attempt.TotalEarned,
+			"passing_percent": passingPercent,
+			"passed":          attempt.Passed,
 		})
 
-		if !attempt.NeedsReview {
-			eventType := domain.AppEventAttemptFailed
-			if attempt.Passed {
-				eventType = domain.AppEventAttemptPassed
-			}
-
-			u.audit.Log(ctx, eventType, map[string]any{
-				"attempt_id":     attempt.ID,
-				"quiz_id":        attempt.QuizID,
-				"user_id":        attempt.UserID,
-				"score_percent":  attempt.ScorePercent,
-				"total_earned":   attempt.TotalEarned,
-				"passing_points": passingPoints,
-			})
+		eventType := domain.AppEventAttemptFailed
+		if attempt.Passed {
+			eventType = domain.AppEventAttemptPassed
 		}
+		u.audit.Log(ctx, eventType, map[string]any{
+			"attempt_id":      attempt.ID,
+			"course_id":       attempt.CourseID,
+			"user_id":         attempt.UserID,
+			"score_percent":   attempt.ScorePercent,
+			"passing_percent": passingPercent,
+		})
 	}
 
-	u.tryAutoIssueCertificate(ctx, quiz, attempt)
+	u.tryAutoIssueCertificate(ctx, course, attempt)
 
 	return attempt, nil
 }
@@ -190,91 +184,12 @@ func (u *AttemptUseCase) List(ctx context.Context, filter domain.AttemptListFilt
 	return attempts, total, nil
 }
 
-func (u *AttemptUseCase) Review(ctx context.Context, params domain.ReviewAttemptParams) (domain.Attempt, error) {
-	normalized, err := normalizeReviewAttemptParams(params)
-	if err != nil {
-		return domain.Attempt{}, fmt.Errorf("usecase attempts review: %w", err)
-	}
-
-	current, err := u.repository.GetAttemptByID(ctx, normalized.AttemptID)
-	if err != nil {
-		return domain.Attempt{}, fmt.Errorf("usecase attempts review load attempt: %w", err)
-	}
-
-	if !current.NeedsReview {
-		return domain.Attempt{}, fmt.Errorf("attempt does not require review: %w", domain.ErrConflict)
-	}
-
-	var quiz domain.Quiz
-	if len(normalized.Scores) > 0 || (u.autoIssuer != nil && u.enrollmentLookup != nil) {
-		quiz, err = u.repository.GetQuizForAttempt(ctx, current.QuizID)
-		if err != nil {
-			return domain.Attempt{}, fmt.Errorf("usecase attempts review load quiz: %w", err)
-		}
-	}
-
-	normalized.TotalEarned = current.TotalEarned
-	normalized.ScorePercent = current.ScorePercent
-	normalized.ReviewScores = json.RawMessage("[]")
-
-	if len(normalized.Scores) > 0 {
-		manualTotalEarned, manualScorePercent, reviewScores, err := u.evaluateManualReview(current, normalized.Scores)
-		if err != nil {
-			return domain.Attempt{}, fmt.Errorf("usecase attempts review manual scoring: %w", err)
-		}
-
-		normalized.TotalEarned = roundToTwo(manualTotalEarned)
-		normalized.ScorePercent = manualScorePercent
-		totalMax := current.TotalMax
-		if totalMax <= 0 {
-			totalMax = totalQuizQuestionPoints(quiz.Questions)
-		}
-		normalized.Passed = manualTotalEarned >= effectivePassingPoints(quiz, totalMax)
-
-		reviewScoresJSON, err := json.Marshal(reviewScores)
-		if err != nil {
-			return domain.Attempt{}, fmt.Errorf("usecase attempts review marshal review scores: %w", err)
-		}
-		normalized.ReviewScores = reviewScoresJSON
-	}
-
-	attempt, err := u.repository.UpdateReview(ctx, normalized)
-	if err != nil {
-		return domain.Attempt{}, fmt.Errorf("usecase attempts review update: %w", err)
-	}
-
-	if u.audit != nil {
-		eventType := domain.AppEventAttemptFailed
-		if attempt.Passed {
-			eventType = domain.AppEventAttemptPassed
-		}
-
-		u.audit.Log(ctx, eventType, map[string]any{
-			"attempt_id":     attempt.ID,
-			"quiz_id":        attempt.QuizID,
-			"user_id":        attempt.UserID,
-			"reviewer_id":    attempt.ReviewerID,
-			"reviewed_at":    attempt.ReviewedAt,
-			"manual_passed":  attempt.ManualPassed,
-			"review_comment": attempt.ReviewComment,
-		})
-	}
-
-	u.tryAutoIssueCertificate(ctx, quiz, attempt)
-
-	return attempt, nil
-}
-
-func (u *AttemptUseCase) tryAutoIssueCertificate(ctx context.Context, quiz domain.Quiz, attempt domain.Attempt) {
+func (u *AttemptUseCase) tryAutoIssueCertificate(ctx context.Context, course domain.Course, attempt domain.Attempt) {
 	if u.autoIssuer == nil || u.enrollmentLookup == nil {
 		return
 	}
 
-	if !attempt.Passed || attempt.NeedsReview {
-		return
-	}
-
-	if quiz.CourseID == nil || strings.TrimSpace(*quiz.CourseID) == "" {
+	if !attempt.Passed {
 		return
 	}
 
@@ -284,7 +199,7 @@ func (u *AttemptUseCase) tryAutoIssueCertificate(ctx context.Context, quiz domai
 
 	userID := strings.TrimSpace(*attempt.UserID)
 
-	enrollment, err := u.enrollmentLookup.GetLatestByCourseAndUser(ctx, *quiz.CourseID, userID)
+	enrollment, err := u.enrollmentLookup.GetLatestByCourseAndUser(ctx, course.ID, userID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return
@@ -292,7 +207,7 @@ func (u *AttemptUseCase) tryAutoIssueCertificate(ctx context.Context, quiz domai
 
 		slog.ErrorContext(ctx, "attempt certificate enrollment lookup failed",
 			slog.String("attempt_id", attempt.ID),
-			slog.String("quiz_id", attempt.QuizID),
+			slog.String("course_id", attempt.CourseID),
 			slog.String("user_id", userID),
 			slog.String("error", err.Error()),
 		)
@@ -303,7 +218,7 @@ func (u *AttemptUseCase) tryAutoIssueCertificate(ctx context.Context, quiz domai
 	if err != nil {
 		slog.ErrorContext(ctx, "attempt certificate auto issue failed",
 			slog.String("attempt_id", attempt.ID),
-			slog.String("quiz_id", attempt.QuizID),
+			slog.String("course_id", attempt.CourseID),
 			slog.String("enrollment_id", enrollment.ID),
 			slog.String("error", err.Error()),
 		)
@@ -313,19 +228,15 @@ func (u *AttemptUseCase) tryAutoIssueCertificate(ctx context.Context, quiz domai
 	if certificate != nil {
 		slog.InfoContext(ctx, "attempt certificate auto issued",
 			slog.String("attempt_id", attempt.ID),
-			slog.String("quiz_id", attempt.QuizID),
+			slog.String("course_id", attempt.CourseID),
 			slog.String("enrollment_id", enrollment.ID),
 			slog.String("certificate_id", certificate.ID),
 		)
 	}
 }
 
-func (u *AttemptUseCase) ensureUserCanSubmitQuiz(ctx context.Context, quiz domain.Quiz, userID string) error {
-	if quiz.CourseID == nil || strings.TrimSpace(*quiz.CourseID) == "" {
-		return nil
-	}
-
-	hasCertificate, err := u.repository.UserHasCourseCertificate(ctx, strings.TrimSpace(*quiz.CourseID), userID)
+func (u *AttemptUseCase) ensureUserCanSubmit(ctx context.Context, course domain.Course, userID string) error {
+	hasCertificate, err := u.repository.UserHasCourseCertificate(ctx, course.ID, userID)
 	if err != nil {
 		return err
 	}
@@ -341,7 +252,6 @@ func attemptWindowStart(now time.Time, cooldownDays int) *time.Time {
 	if cooldownDays <= 0 {
 		return nil
 	}
-
 	start := now.AddDate(0, 0, -cooldownDays)
 	return &start
 }
@@ -350,7 +260,6 @@ func effectiveMaxAttempts(maxAttempts int) int {
 	if maxAttempts <= 0 {
 		return 3
 	}
-
 	return maxAttempts
 }
 
@@ -362,40 +271,22 @@ func attemptLimitExceededError(window domain.AttemptWindow, cooldownDays int) er
 			unlockAt.Format("02.01.2006"),
 		))
 	}
-
 	return domain.ConflictError("Лимит попыток исчерпан. Повторная сдача теста недоступна.")
 }
 
-func effectivePassingPoints(quiz domain.Quiz, totalMax float64) float64 {
-	if quiz.PassingPoints > 0 {
-		return roundToTwo(quiz.PassingPoints)
+func effectivePassingPercent(course domain.Course) float64 {
+	if course.QuizPassPercent > 0 {
+		return float64(course.QuizPassPercent)
 	}
-
-	if totalMax <= 0 {
-		return 0
-	}
-
-	if quiz.PassingScore > 0 {
-		return roundToTwo(totalMax * float64(quiz.PassingScore) / 100)
-	}
-
-	return roundToTwo(totalMax)
-}
-
-func totalQuizQuestionPoints(questions []domain.Question) float64 {
-	total := 0.0
-	for _, question := range questions {
-		total += question.Points
-	}
-	return roundToTwo(total)
+	return float64(defaultQuizPassingScore)
 }
 
 func normalizeSubmitAttemptParams(params domain.SubmitAttemptParams) (domain.SubmitAttemptParams, error) {
-	params.QuizID = strings.TrimSpace(params.QuizID)
+	params.CourseID = strings.TrimSpace(params.CourseID)
 	params.UserID = strings.TrimSpace(params.UserID)
 
-	if params.QuizID == "" {
-		return domain.SubmitAttemptParams{}, fmt.Errorf("quiz_id is required: %w", domain.ErrValidation)
+	if params.CourseID == "" {
+		return domain.SubmitAttemptParams{}, fmt.Errorf("course_id is required: %w", domain.ErrValidation)
 	}
 
 	if params.UserID == "" {
@@ -413,7 +304,6 @@ func normalizeSubmitAttemptParams(params domain.SubmitAttemptParams) (domain.Sub
 		answer.QuestionID = strings.TrimSpace(answer.QuestionID)
 		answer.TextAnswer = normalizeOptionalString(answer.TextAnswer)
 		answer.SelectedOptionIDs = normalizeStringSlice(answer.SelectedOptionIDs)
-		answer.OrderedOptionIDs = normalizeStringSlice(answer.OrderedOptionIDs)
 
 		if answer.QuestionID == "" {
 			return domain.SubmitAttemptParams{}, fmt.Errorf("question_id is required: %w", domain.ErrValidation)
@@ -432,8 +322,8 @@ func normalizeSubmitAttemptParams(params domain.SubmitAttemptParams) (domain.Sub
 }
 
 func normalizeAttemptListFilter(filter domain.AttemptListFilter) (domain.AttemptListFilter, error) {
-	if filter.QuizID != nil {
-		filter.QuizID = normalizeOptionalString(filter.QuizID)
+	if filter.CourseID != nil {
+		filter.CourseID = normalizeOptionalString(filter.CourseID)
 	}
 
 	if filter.UserID != nil {
@@ -455,147 +345,7 @@ func normalizeAttemptListFilter(filter domain.AttemptListFilter) (domain.Attempt
 	return filter, nil
 }
 
-func normalizeReviewAttemptParams(params domain.ReviewAttemptParams) (domain.ReviewAttemptParams, error) {
-	params.AttemptID = strings.TrimSpace(params.AttemptID)
-	params.ReviewerID = strings.TrimSpace(params.ReviewerID)
-	params.Comment = normalizeOptionalString(params.Comment)
-	params.Scores = normalizeReviewAttemptScores(params.Scores)
-
-	if params.AttemptID == "" {
-		return domain.ReviewAttemptParams{}, fmt.Errorf("attempt_id is required: %w", domain.ErrValidation)
-	}
-
-	if params.ReviewerID == "" {
-		return domain.ReviewAttemptParams{}, fmt.Errorf("reviewer_id is required: %w", domain.ErrValidation)
-	}
-
-	seen := make(map[string]struct{}, len(params.Scores))
-	for _, score := range params.Scores {
-		if score.QuestionID == "" {
-			return domain.ReviewAttemptParams{}, fmt.Errorf("score.question_id is required: %w", domain.ErrValidation)
-		}
-
-		if _, exists := seen[score.QuestionID]; exists {
-			return domain.ReviewAttemptParams{}, fmt.Errorf("duplicate score for question: %w", domain.ErrValidation)
-		}
-		seen[score.QuestionID] = struct{}{}
-	}
-
-	return params, nil
-}
-
-func normalizeReviewAttemptScores(scores []domain.AttemptReviewScore) []domain.AttemptReviewScore {
-	if len(scores) == 0 {
-		return nil
-	}
-
-	normalized := make([]domain.AttemptReviewScore, 0, len(scores))
-	for _, score := range scores {
-		score.QuestionID = strings.TrimSpace(score.QuestionID)
-		score.Comment = normalizeOptionalString(score.Comment)
-		normalized = append(normalized, score)
-	}
-
-	return normalized
-}
-
-func (u *AttemptUseCase) evaluateManualReview(current domain.Attempt, reviewScores []domain.AttemptReviewScore) (float64, float64, []domain.AttemptReviewScore, error) {
-	var questions []domain.Question
-	if err := json.Unmarshal(current.QuestionsSnapshot, &questions); err != nil {
-		return 0, 0, nil, fmt.Errorf("unmarshal attempt questions snapshot: %w", err)
-	}
-
-	var answers []domain.AttemptAnswer
-	if len(current.AnswersData) > 0 {
-		if err := json.Unmarshal(current.AnswersData, &answers); err != nil {
-			return 0, 0, nil, fmt.Errorf("unmarshal attempt answers data: %w", err)
-		}
-	}
-
-	answerMap := make(map[string]domain.AttemptAnswer, len(answers))
-	for _, answer := range answers {
-		answerMap[answer.QuestionID] = answer
-	}
-
-	scoreMap := make(map[string]domain.AttemptReviewScore, len(reviewScores))
-	for _, score := range reviewScores {
-		scoreMap[score.QuestionID] = score
-	}
-
-	manualQuestionsCount := 0
-	totalEarned := 0.0
-	totalMax := 0.0
-	normalizedScores := make([]domain.AttemptReviewScore, 0, len(reviewScores))
-
-	for _, question := range questions {
-		totalMax += question.Points
-
-		if isManualReviewQuestionType(question.Type) {
-			manualQuestionsCount++
-
-			score, ok := scoreMap[question.ID]
-			if !ok {
-				return 0, 0, nil, fmt.Errorf("missing review score for question %s: %w", question.ID, domain.ErrValidation)
-			}
-
-			if !isFiniteReviewPoints(score.Points) || score.Points < 0 || score.Points > question.Points {
-				return 0, 0, nil, fmt.Errorf("invalid review points for question %s: %w", question.ID, domain.ErrValidation)
-			}
-
-			normalizedScores = append(normalizedScores, domain.AttemptReviewScore{
-				QuestionID: question.ID,
-				Points:     roundToTwo(score.Points),
-				Comment:    score.Comment,
-			})
-			totalEarned += score.Points
-			delete(scoreMap, question.ID)
-			continue
-		}
-
-		answer := answerMap[question.ID]
-		earned, requiresReview := evaluateQuestion(question, answer)
-		if requiresReview {
-			return 0, 0, nil, fmt.Errorf("question %s unexpectedly requires manual review: %w", question.ID, domain.ErrValidation)
-		}
-
-		totalEarned += earned
-	}
-
-	if len(scoreMap) > 0 {
-		return 0, 0, nil, fmt.Errorf("review scores contain unknown or non-reviewable questions: %w", domain.ErrValidation)
-	}
-
-	if manualQuestionsCount == 0 {
-		return 0, 0, nil, fmt.Errorf("manual scores provided but no manual questions found: %w", domain.ErrValidation)
-	}
-
-	scorePercent := 0.0
-	if totalMax > 0 {
-		scorePercent = roundToTwo(totalEarned / totalMax * 100)
-	}
-
-	return totalEarned, scorePercent, normalizedScores, nil
-}
-
-func isManualReviewQuestionType(questionType domain.QuestionType) bool {
-	switch questionType {
-	case domain.QuestionTypeLongText,
-		domain.QuestionTypeMatching,
-		domain.QuestionTypeOrdering,
-		domain.QuestionTypeAudio,
-		domain.QuestionTypeVideo,
-		domain.QuestionTypeCode:
-		return true
-	default:
-		return false
-	}
-}
-
-func isFiniteReviewPoints(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0)
-}
-
-func evaluateAttempt(quiz domain.Quiz, answers []domain.AttemptAnswer) (float64, float64, bool) {
+func evaluateAttempt(course domain.Course, answers []domain.AttemptAnswer) (float64, float64) {
 	answerMap := make(map[string]domain.AttemptAnswer, len(answers))
 	for _, answer := range answers {
 		answerMap[answer.QuestionID] = answer
@@ -603,9 +353,8 @@ func evaluateAttempt(quiz domain.Quiz, answers []domain.AttemptAnswer) (float64,
 
 	totalEarned := 0.0
 	totalMax := 0.0
-	needsReview := false
 
-	for _, question := range quiz.Questions {
+	for _, question := range course.Questions {
 		totalMax += question.Points
 
 		answer, exists := answerMap[question.ID]
@@ -613,65 +362,57 @@ func evaluateAttempt(quiz domain.Quiz, answers []domain.AttemptAnswer) (float64,
 			continue
 		}
 
-		earned, requiresReview := evaluateQuestion(question, answer)
-		if requiresReview {
-			needsReview = true
-		}
-
+		earned := evaluateQuestion(question, answer)
 		totalEarned += earned
 	}
 
-	return totalEarned, totalMax, needsReview
+	return totalEarned, totalMax
 }
 
-func evaluateQuestion(question domain.Question, answer domain.AttemptAnswer) (float64, bool) {
+func evaluateQuestion(question domain.Question, answer domain.AttemptAnswer) float64 {
 	switch question.Type {
-	case domain.QuestionTypeSingleChoice, domain.QuestionTypeImageChoice:
+	case domain.QuestionTypeSingleChoice:
 		correctIDs, ok := extractCorrectOptionIDs(question.Config)
 		if !ok || len(correctIDs) != 1 || len(answer.SelectedOptionIDs) != 1 {
-			return 0, false
+			return 0
 		}
-
 		if correctIDs[0] == answer.SelectedOptionIDs[0] {
-			return question.Points, false
+			return question.Points
 		}
-		return 0, false
+		return 0
 	case domain.QuestionTypeMultipleChoice:
 		correctIDs, ok := extractCorrectOptionIDs(question.Config)
 		if !ok {
-			return 0, false
+			return 0
 		}
-
 		selected := normalizeStringSlice(answer.SelectedOptionIDs)
 		if sameStringSet(correctIDs, selected) {
-			return question.Points, false
+			return question.Points
 		}
-		return 0, false
+		return 0
 	case domain.QuestionTypeTrueFalse:
 		correctValue, ok := extractCorrectBoolean(question.Config)
 		if !ok || answer.BooleanAnswer == nil {
-			return 0, false
+			return 0
 		}
-
 		if correctValue == *answer.BooleanAnswer {
-			return question.Points, false
+			return question.Points
 		}
-		return 0, false
+		return 0
 	case domain.QuestionTypeShortAnswer, domain.QuestionTypeFillBlank:
 		acceptedAnswers, ok := extractAcceptedAnswers(question.Config)
 		if !ok || answer.TextAnswer == nil {
-			return 0, false
+			return 0
 		}
-
 		candidate := strings.ToLower(strings.TrimSpace(*answer.TextAnswer))
 		for _, accepted := range acceptedAnswers {
 			if candidate == accepted {
-				return question.Points, false
+				return question.Points
 			}
 		}
-		return 0, false
+		return 0
 	default:
-		return 0, true
+		return 0
 	}
 }
 

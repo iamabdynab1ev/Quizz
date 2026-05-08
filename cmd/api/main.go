@@ -136,9 +136,7 @@ func run() error {
 	courseUseCase := usecase.NewCourseUseCase(courseRepository).WithAudit(auditLogger)
 	coursesHandler := httpHandler.NewCoursesHandler(logger, courseUseCase)
 
-	quizRepository := postgres.NewQuizRepository(dbPool)
-	quizUseCase := usecase.NewQuizUseCase(quizRepository).WithAudit(auditLogger)
-	quizzesHandler := httpHandler.NewQuizzesHandler(logger, quizUseCase)
+	quizzesHandler := httpHandler.NewQuizzesHandler(logger, courseUseCase)
 
 	attemptRepository := postgres.NewAttemptRepository(dbPool)
 	attemptUseCase := usecase.NewAttemptUseCase(attemptRepository).WithAudit(auditLogger)
@@ -161,10 +159,6 @@ func run() error {
 	coursePackageRepository := postgres.NewCoursePackageRepository(dbPool)
 	coursePackageUseCase := usecase.NewCoursePackageUseCase(coursePackageRepository).WithAudit(auditLogger)
 	coursePackagesHandler := httpHandler.NewCoursePackagesHandler(logger, coursePackageUseCase)
-
-	courseTestRepository := postgres.NewCourseTestRepository(dbPool)
-	courseTestUseCase := usecase.NewCourseTestUseCase(courseTestRepository)
-	courseTestsHandler := httpHandler.NewCourseTestsHandler(logger, courseTestUseCase)
 
 	courseModuleRepository := postgres.NewCourseModuleRepository(dbPool)
 	courseModuleUseCase := usecase.NewCourseModuleUseCase(courseModuleRepository)
@@ -209,7 +203,6 @@ func run() error {
 		certificatesHandler,
 		dashboardHandler,
 		coursePackagesHandler,
-		courseTestsHandler,
 		courseModulesHandler,
 		contentBlocksHandler,
 		reviewsHandler,

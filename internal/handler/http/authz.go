@@ -23,7 +23,7 @@ func scopeUserID(ctx context.Context, requested *string) (*string, error) {
 		return nil, err
 	}
 
-	if identity.User.Role == domain.UserRoleAdmin {
+	if identity.User.IsAdmin || identity.User.IsSuperAdmin {
 		return requested, nil
 	}
 
@@ -41,7 +41,7 @@ func resolveActorUserID(ctx context.Context, requested *string) (string, error) 
 		return "", err
 	}
 
-	if identity.User.Role != domain.UserRoleAdmin {
+	if !identity.User.IsAdmin && !identity.User.IsSuperAdmin {
 		if requested != nil && *requested != identity.User.ID {
 			return "", fmt.Errorf("user scope mismatch: %w", domain.ForbiddenError("access denied for requested user"))
 		}
@@ -62,7 +62,7 @@ func ensureOwnOrAdmin(ctx context.Context, ownerUserID *string) error {
 		return err
 	}
 
-	if identity.User.Role == domain.UserRoleAdmin {
+	if identity.User.IsAdmin || identity.User.IsSuperAdmin {
 		return nil
 	}
 

@@ -75,42 +75,26 @@ func (r *CourseModuleRepository) GetByID(ctx context.Context, moduleID string) (
 }
 
 func (r *CourseModuleRepository) List(ctx context.Context, filter domain.CourseModuleListFilter) ([]domain.CourseModule, int, error) {
-	buildQuery := func(includePagination bool) (string, []any) {
-		if includePagination {
-			return `
-				SELECT id, course_id, position, title, description
-				FROM course_modules
-				WHERE course_id = $1
-				ORDER BY position ASC
-			`, []any{filter.CourseID}
-		}
-
-		return `
-			SELECT COUNT(*)
-			FROM course_modules
-			WHERE course_id = $1
-		`, []any{filter.CourseID}
-	}
-
-	countQuery, countArgs := buildQuery(false)
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("repository postgres course modules list count: %w", err)
-	}
-
-	query, args := buildQuery(true)
-	rows, err := r.pool.Query(ctx, query, args...)
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, course_id, position, title, description,
+			COUNT(*) OVER() AS total_count
+		FROM course_modules
+		WHERE course_id = $1
+		ORDER BY position ASC
+	`, filter.CourseID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repository postgres course modules list query: %w", err)
 	}
 	defer rows.Close()
 
+	var total int
 	modules := make([]domain.CourseModule, 0)
 	for rows.Next() {
-		module, err := scanCourseModuleRow(rows)
+		module, rowTotal, err := scanCourseModuleRowWithTotal(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("repository postgres course modules list scan: %w", err)
 		}
+		total = rowTotal
 		modules = append(modules, module)
 	}
 
@@ -170,6 +154,36 @@ func (r *CourseModuleRepository) Delete(ctx context.Context, moduleID string) er
 	}
 
 	return nil
+}
+
+func scanCourseModuleRowWithTotal(scanner courseModuleRowScanner) (domain.CourseModule, int, error) {
+	var module domain.CourseModule
+	var titleBytes []byte
+	var descriptionBytes []byte
+	var total int
+
+	if err := scanner.Scan(
+		&module.ID,
+		&module.CourseID,
+		&module.Position,
+		&titleBytes,
+		&descriptionBytes,
+		&total,
+	); err != nil {
+		return domain.CourseModule{}, 0, err
+	}
+
+	if err := module.Title.Scan(titleBytes); err != nil {
+		return domain.CourseModule{}, 0, fmt.Errorf("repository postgres scan course module title: %w", err)
+	}
+
+	if len(descriptionBytes) > 0 {
+		if err := module.Description.Scan(descriptionBytes); err != nil {
+			return domain.CourseModule{}, 0, fmt.Errorf("repository postgres scan course module description: %w", err)
+		}
+	}
+
+	return module, total, nil
 }
 
 func scanCourseModuleRow(scanner courseModuleRowScanner) (domain.CourseModule, error) {

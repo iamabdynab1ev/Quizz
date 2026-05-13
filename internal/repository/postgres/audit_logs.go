@@ -66,64 +66,46 @@ func (r *AuditLogRepository) GetByID(ctx context.Context, auditLogID string) (do
 }
 
 func (r *AuditLogRepository) List(ctx context.Context, filter domain.AuditLogListFilter) ([]domain.AuditLog, int, error) {
-	buildQuery := func(includePagination bool) (string, []any) {
-		query := strings.Builder{}
-		if includePagination {
-			query.WriteString(`
-				SELECT id, type, at, actor_id::text, payload
-				FROM audit_logs
-				WHERE 1 = 1
-			`)
-		} else {
-			query.WriteString(`
-				SELECT COUNT(*)
-				FROM audit_logs
-				WHERE 1 = 1
-			`)
-		}
+	query := strings.Builder{}
+	query.WriteString(`
+		SELECT id, type, at, actor_id::text, payload,
+			COUNT(*) OVER() AS total_count
+		FROM audit_logs
+		WHERE 1 = 1
+	`)
 
-		args := make([]any, 0, 4)
-		position := 1
+	args := make([]any, 0, 4)
+	position := 1
 
-		if filter.Type != nil {
-			query.WriteString(fmt.Sprintf(" AND type = $%d", position))
-			args = append(args, string(*filter.Type))
-			position++
-		}
-
-		if filter.ActorID != nil {
-			query.WriteString(fmt.Sprintf(" AND actor_id = $%d::uuid", position))
-			args = append(args, *filter.ActorID)
-			position++
-		}
-
-		if includePagination {
-			query.WriteString(fmt.Sprintf(" ORDER BY at DESC LIMIT $%d OFFSET $%d", position, position+1))
-			args = append(args, filter.Limit, filter.Offset)
-		}
-
-		return query.String(), args
+	if filter.Type != nil {
+		query.WriteString(fmt.Sprintf(" AND type = $%d", position))
+		args = append(args, string(*filter.Type))
+		position++
 	}
 
-	countQuery, countArgs := buildQuery(false)
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("repository postgres audit logs list count: %w", err)
+	if filter.ActorID != nil {
+		query.WriteString(fmt.Sprintf(" AND actor_id = $%d::uuid", position))
+		args = append(args, *filter.ActorID)
+		position++
 	}
 
-	query, args := buildQuery(true)
-	rows, err := r.pool.Query(ctx, query, args...)
+	query.WriteString(fmt.Sprintf(" ORDER BY at DESC LIMIT $%d OFFSET $%d", position, position+1))
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := r.pool.Query(ctx, query.String(), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repository postgres audit logs list query: %w", err)
 	}
 	defer rows.Close()
 
+	var total int
 	auditLogs := make([]domain.AuditLog, 0, filter.Limit)
 	for rows.Next() {
-		auditLog, err := scanAuditLogRow(rows)
+		auditLog, rowTotal, err := scanAuditLogRowWithTotal(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("repository postgres audit logs list scan: %w", err)
 		}
+		total = rowTotal
 		auditLogs = append(auditLogs, auditLog)
 	}
 
@@ -244,6 +226,28 @@ func scanAuditLogRow(scanner auditLogRowScanner) (domain.AuditLog, error) {
 	auditLog.Type = domain.AppEventType(eventType)
 	auditLog.ActorID = optionalString(actorID)
 	return auditLog, nil
+}
+
+func scanAuditLogRowWithTotal(scanner auditLogRowScanner) (domain.AuditLog, int, error) {
+	var auditLog domain.AuditLog
+	var eventType string
+	var actorID sql.NullString
+	var total int
+
+	if err := scanner.Scan(
+		&auditLog.ID,
+		&eventType,
+		&auditLog.At,
+		&actorID,
+		&auditLog.Payload,
+		&total,
+	); err != nil {
+		return domain.AuditLog{}, 0, err
+	}
+
+	auditLog.Type = domain.AppEventType(eventType)
+	auditLog.ActorID = optionalString(actorID)
+	return auditLog, total, nil
 }
 
 func scanAuditLogDispatchRow(scanner auditLogRowScanner) (domain.AuditLog, error) {

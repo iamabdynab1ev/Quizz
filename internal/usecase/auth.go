@@ -46,6 +46,10 @@ type authPasswordResetRepository interface {
 	MarkUsed(ctx context.Context, tokenID string) error
 }
 
+type recaptchaVerifier interface {
+	Verify(ctx context.Context, token string, remoteIP string) error
+}
+
 type AuthUseCase struct {
 	users               authUserRepository
 	sessions            authSessionRepository
@@ -61,8 +65,14 @@ type AuthUseCase struct {
 	passwordResetTTL    time.Duration
 	passwordResetReturn bool
 	google              googleTokenVerifier
+	recaptcha           recaptchaVerifier
 	audit               *AuditLogger
+	avatarStorage       avatarDeleter
 	now                 func() time.Time
+}
+
+type avatarDeleter interface {
+	Delete(publicPath string) error
 }
 
 func NewAuthUseCase(
@@ -80,7 +90,6 @@ func NewAuthUseCase(
 	passwordResetTTL time.Duration,
 	passwordResetReturn bool,
 	google googleTokenVerifier,
-	_ string, // googleDefaultRole removed — all self-registered users are clients
 ) *AuthUseCase {
 	return &AuthUseCase{
 		users:               users,
@@ -106,10 +115,31 @@ func (u *AuthUseCase) WithAudit(audit *AuditLogger) *AuthUseCase {
 	return u
 }
 
+func (u *AuthUseCase) WithAvatarStorage(storage avatarDeleter) *AuthUseCase {
+	u.avatarStorage = storage
+	return u
+}
+
+func (u *AuthUseCase) WithRecaptcha(v recaptchaVerifier) *AuthUseCase {
+	u.recaptcha = v
+	return u
+}
+
 func (u *AuthUseCase) Register(ctx context.Context, params domain.RegisterParams) (domain.LoginResult, error) {
 	normalized, err := normalizeRegisterParams(params)
 	if err != nil {
 		return domain.LoginResult{}, fmt.Errorf("usecase auth register: %w", err)
+	}
+
+	if u.recaptcha != nil {
+		ip := ""
+		if normalized.IPAddress != nil {
+			ip = *normalized.IPAddress
+		}
+		if err := u.recaptcha.Verify(ctx, normalized.RecaptchaToken, ip); err != nil {
+			return domain.LoginResult{}, domain.FieldValidationError("Проверка безопасности не пройдена",
+				domain.ValidationField("recaptcha_token", "recaptcha_failed", "Проверка безопасности не пройдена"))
+		}
 	}
 
 	passwordHash, err := hashPassword(normalized.Password, u.bcryptCost)
@@ -334,6 +364,11 @@ func (u *AuthUseCase) UpdateProfile(ctx context.Context, params domain.UpdatePro
 	user, err := u.users.Update(ctx, update)
 	if err != nil {
 		return domain.User{}, fmt.Errorf("usecase auth update profile save: %w", err)
+	}
+
+	if u.avatarStorage != nil && normalized.AvatarURL != nil && current.AvatarURL != nil &&
+		*current.AvatarURL != "" && *normalized.AvatarURL != *current.AvatarURL {
+		_ = u.avatarStorage.Delete(*current.AvatarURL)
 	}
 
 	if u.audit != nil {
@@ -587,7 +622,6 @@ func (u *AuthUseCase) cacheIdentity(token string, user domain.User, session doma
 	}
 
 	cachedUser := user
-	cachedUser.PasswordHash = nil
 
 	u.sessionCache.Set(token, domain.AuthIdentity{
 		User:    cachedUser,
@@ -821,27 +855,30 @@ func profileUpdateToUserParams(current domain.User, params domain.UpdateProfileP
 		BirthDate:  keepExistingOptionalString(params.BirthDate, current.BirthDate),
 		Address:    current.Address,
 		City:       keepExistingOptionalString(params.City, current.City),
-		AvatarURL:  current.AvatarURL,
+		AvatarURL:  keepExistingOptionalString(params.AvatarURL, current.AvatarURL),
 		IsActive:   current.IsActive,
 	}
 }
 
 func userToPasswordUpdateParams(user domain.User) domain.UpdateUserParams {
+	mustChangePassword := false
+
 	return domain.UpdateUserParams{
-		ID:         user.ID,
-		Email:      user.Email,
-		GoogleID:   user.GoogleID,
-		IsAdmin:    user.IsAdmin,
-		FirstName:  user.FirstName,
-		LastName:   user.LastName,
-		Patronymic: user.Patronymic,
-		Phone:      user.Phone,
-		IsMale:    user.IsMale,
-		BirthDate: user.BirthDate,
-		Address:   user.Address,
-		City:      user.City,
-		AvatarURL: user.AvatarURL,
-		IsActive:  user.IsActive,
+		ID:                 user.ID,
+		Email:              user.Email,
+		GoogleID:           user.GoogleID,
+		IsAdmin:            user.IsAdmin,
+		MustChangePassword: &mustChangePassword,
+		FirstName:          user.FirstName,
+		LastName:           user.LastName,
+		Patronymic:         user.Patronymic,
+		Phone:              user.Phone,
+		IsMale:             user.IsMale,
+		BirthDate:          user.BirthDate,
+		Address:            user.Address,
+		City:               user.City,
+		AvatarURL:          user.AvatarURL,
+		IsActive:           user.IsActive,
 	}
 }
 

@@ -9,14 +9,15 @@ import (
 )
 
 type Config struct {
-	App      AppConfig
-	HTTP     HTTPConfig
-	Auth     AuthConfig
-	Google   GoogleConfig
-	Upload   UploadConfig
-	Database DatabaseConfig
-	Migrate  MigrateConfig
-	Seed     SeedConfig
+	App       AppConfig
+	HTTP      HTTPConfig
+	Auth      AuthConfig
+	Google    GoogleConfig
+	Recaptcha RecaptchaConfig
+	Upload    UploadConfig
+	Database  DatabaseConfig
+	Migrate   MigrateConfig
+	Seed      SeedConfig
 }
 
 type AppConfig struct {
@@ -52,8 +53,13 @@ type LoginLockoutConfig struct {
 }
 
 type GoogleConfig struct {
-	ClientID    string
-	DefaultRole string
+	ClientID string
+}
+
+type RecaptchaConfig struct {
+	SecretKey string
+	MinScore  float64
+	Enabled   bool
 }
 
 type UploadConfig struct {
@@ -159,9 +165,18 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("config load auth password reset return token: %w", err)
 	}
 
-	googleDefaultRole, err := getEnum("AUTH_GOOGLE_DEFAULT_ROLE", "student", []string{"admin", "employee", "student", "guest"})
+	recaptchaEnabled, err := getBool("RECAPTCHA_ENABLED", false)
 	if err != nil {
-		return Config{}, fmt.Errorf("config load auth google default role: %w", err)
+		return Config{}, fmt.Errorf("config load recaptcha enabled: %w", err)
+	}
+
+	recaptchaMinScore, err := getFloat64("RECAPTCHA_MIN_SCORE", 0.5)
+	if err != nil {
+		return Config{}, fmt.Errorf("config load recaptcha min score: %w", err)
+	}
+	recaptchaSecretKey := getEnv("RECAPTCHA_SECRET_KEY", "")
+	if recaptchaEnabled && strings.TrimSpace(recaptchaSecretKey) == "" {
+		return Config{}, fmt.Errorf("config load recaptcha secret key: RECAPTCHA_SECRET_KEY is required when RECAPTCHA_ENABLED=true")
 	}
 
 	uploadMaxSizeMB, err := getInt("UPLOAD_MAX_SIZE_MB", 20)
@@ -238,8 +253,12 @@ func Load() (Config, error) {
 			},
 		},
 		Google: GoogleConfig{
-			ClientID:    getEnv("GOOGLE_CLIENT_ID", ""),
-			DefaultRole: googleDefaultRole,
+			ClientID: getEnv("GOOGLE_CLIENT_ID", ""),
+		},
+		Recaptcha: RecaptchaConfig{
+			SecretKey: recaptchaSecretKey,
+			MinScore:  recaptchaMinScore,
+			Enabled:   recaptchaEnabled,
 		},
 		Upload: UploadConfig{
 			Dir:          getEnv("UPLOADS_DIR", "uploads"),
@@ -336,6 +355,20 @@ func getInt(key string, fallback int) (int, error) {
 	value, err := strconv.Atoi(rawValue)
 	if err != nil {
 		return 0, fmt.Errorf("config parse int %s: %w", key, err)
+	}
+
+	return value, nil
+}
+
+func getFloat64(key string, fallback float64) (float64, error) {
+	rawValue := strings.TrimSpace(os.Getenv(key))
+	if rawValue == "" {
+		return fallback, nil
+	}
+
+	value, err := strconv.ParseFloat(rawValue, 64)
+	if err != nil {
+		return 0, fmt.Errorf("config parse float64 %s: %w", key, err)
 	}
 
 	return value, nil

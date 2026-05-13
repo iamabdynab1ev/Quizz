@@ -91,69 +91,56 @@ func (r *CertificateRepository) GetByVerifyHash(ctx context.Context, verifyHash 
 }
 
 func (r *CertificateRepository) List(ctx context.Context, filter domain.CertificateListFilter) ([]domain.Certificate, int, error) {
-	buildQuery := func(includePagination bool) (string, []any) {
-		query := strings.Builder{}
-		if includePagination {
-			query.WriteString(certificateSelectQuery(" WHERE 1 = 1 "))
-		} else {
-			query.WriteString(`
-				SELECT COUNT(*)
-				FROM certificates cert
-				JOIN users u ON u.id = cert.user_id
-				JOIN courses c ON c.id = cert.course_id
-				WHERE 1 = 1
-			`)
-		}
+	query := strings.Builder{}
+	query.WriteString(`
+		SELECT
+			cert.id, cert.enrollment_id, cert.user_id, cert.course_id, cert.attempt_id,
+			cert.serial_number, cert.verify_hash, cert.issued_at, cert.pdf_url,
+			COALESCE(u.first_name, ''), COALESCE(u.last_name, ''), COALESCE(u.patronymic, ''),
+			c.title,
+			COUNT(*) OVER() AS total_count
+		FROM certificates cert
+		JOIN users u ON u.id = cert.user_id
+		JOIN courses c ON c.id = cert.course_id
+		WHERE 1 = 1
+	`)
 
-		args := make([]any, 0, 5)
-		position := 1
+	args := make([]any, 0, 5)
+	position := 1
 
-		if filter.UserID != nil {
-			query.WriteString(fmt.Sprintf(" AND cert.user_id = $%d", position))
-			args = append(args, *filter.UserID)
-			position++
-		}
-
-		if filter.CourseID != nil {
-			query.WriteString(fmt.Sprintf(" AND cert.course_id = $%d", position))
-			args = append(args, *filter.CourseID)
-			position++
-		}
-
-		if filter.EnrollmentID != nil {
-			query.WriteString(fmt.Sprintf(" AND cert.enrollment_id = $%d", position))
-			args = append(args, *filter.EnrollmentID)
-			position++
-		}
-
-		if includePagination {
-			query.WriteString(fmt.Sprintf(" ORDER BY cert.issued_at DESC LIMIT $%d OFFSET $%d", position, position+1))
-			args = append(args, filter.Limit, filter.Offset)
-		}
-
-		return query.String(), args
+	if filter.UserID != nil {
+		query.WriteString(fmt.Sprintf(" AND cert.user_id = $%d", position))
+		args = append(args, *filter.UserID)
+		position++
+	}
+	if filter.CourseID != nil {
+		query.WriteString(fmt.Sprintf(" AND cert.course_id = $%d", position))
+		args = append(args, *filter.CourseID)
+		position++
+	}
+	if filter.EnrollmentID != nil {
+		query.WriteString(fmt.Sprintf(" AND cert.enrollment_id = $%d", position))
+		args = append(args, *filter.EnrollmentID)
+		position++
 	}
 
-	countQuery, countArgs := buildQuery(false)
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("repository postgres certificates list count: %w", err)
-	}
+	query.WriteString(fmt.Sprintf(" ORDER BY cert.issued_at DESC LIMIT $%d OFFSET $%d", position, position+1))
+	args = append(args, filter.Limit, filter.Offset)
 
-	query, args := buildQuery(true)
-	rows, err := r.pool.Query(ctx, query, args...)
+	rows, err := r.pool.Query(ctx, query.String(), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repository postgres certificates list query: %w", err)
 	}
 	defer rows.Close()
 
+	var total int
 	certificates := make([]domain.Certificate, 0, filter.Limit)
 	for rows.Next() {
-		certificate, err := scanCertificateRow(rows)
+		certificate, rowTotal, err := scanCertificateRowWithTotal(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("repository postgres certificates list scan: %w", err)
 		}
-
+		total = rowTotal
 		certificates = append(certificates, certificate)
 	}
 
@@ -217,16 +204,9 @@ func (r *CertificateRepository) GetIssuanceContext(ctx context.Context, enrollme
 			COALESCE(u.patronymic, '')
 		FROM enrollments e
 		JOIN courses c ON c.id = e.course_id
-		JOIN attempts a ON a.id = $2
+		JOIN attempts a ON a.id = $2 AND a.course_id = e.course_id
 		JOIN users u ON u.id = e.user_id
 		WHERE e.id = $1
-			AND EXISTS (
-				SELECT 1
-				FROM course_tests ct
-				LEFT JOIN course_modules cm ON cm.id = ct.module_id
-				WHERE ct.quiz_id = a.quiz_id
-					AND (ct.course_id = e.course_id OR cm.course_id = e.course_id)
-			)
 	`,
 		enrollmentID,
 		attemptID,
@@ -274,15 +254,8 @@ func (r *CertificateRepository) FindAutoIssueCandidate(ctx context.Context, enro
 			a.score_percent
 		FROM enrollments e
 		JOIN courses c ON c.id = e.course_id
-		JOIN attempts a ON a.user_id = e.user_id AND a.passed = true
+		JOIN attempts a ON a.user_id = e.user_id AND a.course_id = e.course_id AND a.passed = true
 		WHERE e.id = $1
-			AND EXISTS (
-				SELECT 1
-				FROM course_tests ct
-				LEFT JOIN course_modules cm ON cm.id = ct.module_id
-				WHERE ct.quiz_id = a.quiz_id
-					AND (ct.course_id = e.course_id OR cm.course_id = e.course_id)
-			)
 		ORDER BY a.score_percent DESC, a.finished_at DESC NULLS LAST, a.started_at DESC
 		LIMIT 1
 	`, enrollmentID).Scan(
@@ -331,18 +304,11 @@ func scanCertificateRow(scanner certificateRowScanner) (domain.Certificate, erro
 	var courseTitleBytes []byte
 
 	if err := scanner.Scan(
-		&certificate.ID,
-		&certificate.EnrollmentID,
-		&certificate.UserID,
-		&certificate.CourseID,
-		&certificate.AttemptID,
-		&certificate.SerialNumber,
-		&certificate.VerifyHash,
-		&certificate.IssuedAt,
+		&certificate.ID, &certificate.EnrollmentID, &certificate.UserID,
+		&certificate.CourseID, &certificate.AttemptID,
+		&certificate.SerialNumber, &certificate.VerifyHash, &certificate.IssuedAt,
 		&pdfURL,
-		&certificate.UserFirstName,
-		&certificate.UserLastName,
-		&certificate.Patronymic,
+		&certificate.UserFirstName, &certificate.UserLastName, &certificate.Patronymic,
 		&courseTitleBytes,
 	); err != nil {
 		return domain.Certificate{}, err
@@ -353,6 +319,31 @@ func scanCertificateRow(scanner certificateRowScanner) (domain.Certificate, erro
 	}
 
 	certificate.PDFURL = optionalString(pdfURL)
-
 	return certificate, nil
+}
+
+func scanCertificateRowWithTotal(scanner certificateRowScanner) (domain.Certificate, int, error) {
+	var certificate domain.Certificate
+	var pdfURL sql.NullString
+	var courseTitleBytes []byte
+	var total int
+
+	if err := scanner.Scan(
+		&certificate.ID, &certificate.EnrollmentID, &certificate.UserID,
+		&certificate.CourseID, &certificate.AttemptID,
+		&certificate.SerialNumber, &certificate.VerifyHash, &certificate.IssuedAt,
+		&pdfURL,
+		&certificate.UserFirstName, &certificate.UserLastName, &certificate.Patronymic,
+		&courseTitleBytes,
+		&total,
+	); err != nil {
+		return domain.Certificate{}, 0, err
+	}
+
+	if err := certificate.CourseTitle.Scan(courseTitleBytes); err != nil {
+		return domain.Certificate{}, 0, fmt.Errorf("repository postgres scan certificate course title: %w", err)
+	}
+
+	certificate.PDFURL = optionalString(pdfURL)
+	return certificate, total, nil
 }

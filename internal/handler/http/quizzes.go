@@ -47,6 +47,8 @@ type quizRequest struct {
 	Questions          []domain.QuestionPayload `json:"questions"`
 }
 
+func boolPtr(v bool) *bool { return &v }
+
 func (r quizRequest) toCreateParams() domain.CreateCourseParams {
 	return domain.CreateCourseParams{
 		Title:              r.Title,
@@ -56,6 +58,7 @@ func (r quizRequest) toCreateParams() domain.CreateCourseParams {
 		Platforms:          r.Platforms,
 		VideoURL:           r.VideoURL,
 		CoverImageURL:      r.CoverImageURL,
+		CertificateEnabled: boolPtr(true),
 		QuizPassPercent:    r.PassingScore,
 		QuizMinutes:        ptrIntOrZero(r.TimeLimitMinutes),
 		MaxAttempts:        r.MaxAttempts,
@@ -74,6 +77,7 @@ func (r quizRequest) toUpdateParams(id string) domain.UpdateCourseParams {
 		Platforms:          r.Platforms,
 		VideoURL:           r.VideoURL,
 		CoverImageURL:      r.CoverImageURL,
+		CertificateEnabled: true,
 		QuizPassPercent:    r.PassingScore,
 		QuizMinutes:        ptrIntOrZero(r.TimeLimitMinutes),
 		MaxAttempts:        r.MaxAttempts,

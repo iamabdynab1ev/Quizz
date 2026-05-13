@@ -130,63 +130,49 @@ func (r *AttemptRepository) GetAttemptByID(ctx context.Context, attemptID string
 }
 
 func (r *AttemptRepository) ListAttempts(ctx context.Context, filter domain.AttemptListFilter) ([]domain.Attempt, int, error) {
-	buildQuery := func(includePagination bool) (string, []any) {
-		query := strings.Builder{}
-		if includePagination {
-			query.WriteString(`
-				SELECT
-					id, course_id, user_id, started_at, finished_at,
-					questions_snapshot, answers_data,
-					total_earned, total_max, score_percent, passed
-				FROM attempts
-				WHERE 1 = 1
-			`)
-		} else {
-			query.WriteString(`SELECT COUNT(*) FROM attempts WHERE 1 = 1`)
-		}
+	query := strings.Builder{}
+	query.WriteString(`
+		SELECT
+			id, course_id, user_id, started_at, finished_at,
+			questions_snapshot, answers_data,
+			total_earned, total_max, score_percent, passed,
+			COUNT(*) OVER() AS total_count
+		FROM attempts
+		WHERE 1 = 1
+	`)
 
-		args := make([]any, 0, 4)
-		position := 1
+	args := make([]any, 0, 4)
+	position := 1
 
-		if filter.CourseID != nil {
-			query.WriteString(fmt.Sprintf(" AND course_id = $%d", position))
-			args = append(args, *filter.CourseID)
-			position++
-		}
-
-		if filter.UserID != nil {
-			query.WriteString(fmt.Sprintf(" AND user_id = $%d", position))
-			args = append(args, *filter.UserID)
-			position++
-		}
-
-		if includePagination {
-			query.WriteString(fmt.Sprintf(" ORDER BY started_at DESC LIMIT $%d OFFSET $%d", position, position+1))
-			args = append(args, filter.Limit, filter.Offset)
-		}
-
-		return query.String(), args
+	if filter.CourseID != nil {
+		query.WriteString(fmt.Sprintf(" AND course_id = $%d", position))
+		args = append(args, *filter.CourseID)
+		position++
 	}
 
-	countQuery, countArgs := buildQuery(false)
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("repository postgres attempts list count: %w", err)
+	if filter.UserID != nil {
+		query.WriteString(fmt.Sprintf(" AND user_id = $%d", position))
+		args = append(args, *filter.UserID)
+		position++
 	}
 
-	query, args := buildQuery(true)
-	rows, err := r.pool.Query(ctx, query, args...)
+	query.WriteString(fmt.Sprintf(" ORDER BY started_at DESC LIMIT $%d OFFSET $%d", position, position+1))
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := r.pool.Query(ctx, query.String(), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repository postgres attempts list query: %w", err)
 	}
 	defer rows.Close()
 
+	var total int
 	attempts := make([]domain.Attempt, 0, filter.Limit)
 	for rows.Next() {
-		attempt, err := scanAttemptRow(rows)
+		attempt, rowTotal, err := scanAttemptRowWithTotal(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("repository postgres attempts list scan: %w", err)
 		}
+		total = rowTotal
 		attempts = append(attempts, attempt)
 	}
 
@@ -222,4 +208,33 @@ func scanAttemptRow(scanner attemptRowScanner) (domain.Attempt, error) {
 	attempt.FinishedAt = optionalTime(finishedAt)
 
 	return attempt, nil
+}
+
+func scanAttemptRowWithTotal(scanner attemptRowScanner) (domain.Attempt, int, error) {
+	var attempt domain.Attempt
+	var userID sql.NullString
+	var finishedAt sql.NullTime
+	var total int
+
+	if err := scanner.Scan(
+		&attempt.ID,
+		&attempt.CourseID,
+		&userID,
+		&attempt.StartedAt,
+		&finishedAt,
+		&attempt.QuestionsSnapshot,
+		&attempt.AnswersData,
+		&attempt.TotalEarned,
+		&attempt.TotalMax,
+		&attempt.ScorePercent,
+		&attempt.Passed,
+		&total,
+	); err != nil {
+		return domain.Attempt{}, 0, err
+	}
+
+	attempt.UserID = optionalString(userID)
+	attempt.FinishedAt = optionalTime(finishedAt)
+
+	return attempt, total, nil
 }

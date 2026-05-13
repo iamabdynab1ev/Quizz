@@ -11,7 +11,7 @@ import (
 const (
 	defaultQuizPassingScore       = 80
 	defaultQuizMaxAttempts        = 3
-	defaultQuizRetakeCooldownDays = 30
+	defaultQuizRetakeCooldownDays = 0
 	maxQuizRetakeCooldownDays     = 730
 )
 
@@ -155,7 +155,7 @@ func normalizeQuizScoringAndAttempts(
 	if passingScore <= 0 {
 		passingScore = defaultQuizPassingScore
 	}
-	validation.addIntRange("quiz_pass_percent", passingScore, 0, 100, "Процент прохождения")
+	validation.addIntRange("quiz_pass_percent", passingScore, 0, 100, "Значение проходного процента")
 
 	if quizMinutes < 0 {
 		quizMinutes = 0
@@ -165,7 +165,7 @@ func normalizeQuizScoringAndAttempts(
 		maxAttempts = defaultQuizMaxAttempts
 	}
 
-	if retakeCooldownDays <= 0 {
+	if retakeCooldownDays < 0 {
 		retakeCooldownDays = defaultQuizRetakeCooldownDays
 	}
 	if retakeCooldownDays > maxQuizRetakeCooldownDays {

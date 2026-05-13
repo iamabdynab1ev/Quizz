@@ -103,7 +103,7 @@ func TestNormalizeQuizScoringDefaults(t *testing.T) {
 	if maxAttempts != 3 {
 		t.Fatalf("expected default max attempts 3, got %d", maxAttempts)
 	}
-	if cooldown != 30 {
-		t.Fatalf("expected default retake cooldown 30, got %d", cooldown)
+	if cooldown != 0 {
+		t.Fatalf("expected default retake cooldown 0, got %d", cooldown)
 	}
 }

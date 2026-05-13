@@ -79,70 +79,52 @@ func (r *NotificationRepository) GetByID(ctx context.Context, notificationID str
 }
 
 func (r *NotificationRepository) List(ctx context.Context, filter domain.NotificationListFilter) ([]domain.Notification, int, error) {
-	buildQuery := func(includePagination bool) (string, []any) {
-		query := strings.Builder{}
-		if includePagination {
-			query.WriteString(`
-				SELECT id, user_id, type, title, body, link, read, created_at
-				FROM notifications
-				WHERE 1 = 1
-			`)
-		} else {
-			query.WriteString(`
-				SELECT COUNT(*)
-				FROM notifications
-				WHERE 1 = 1
-			`)
-		}
+	query := strings.Builder{}
+	query.WriteString(`
+		SELECT id, user_id, type, title, body, link, read, created_at,
+			COUNT(*) OVER() AS total_count
+		FROM notifications
+		WHERE 1 = 1
+	`)
 
-		args := make([]any, 0, 5)
-		position := 1
+	args := make([]any, 0, 5)
+	position := 1
 
-		if filter.UserID != nil {
-			query.WriteString(fmt.Sprintf(" AND user_id = $%d::uuid", position))
-			args = append(args, *filter.UserID)
-			position++
-		}
-
-		if filter.Type != nil {
-			query.WriteString(fmt.Sprintf(" AND type = $%d", position))
-			args = append(args, string(*filter.Type))
-			position++
-		}
-
-		if filter.Read != nil {
-			query.WriteString(fmt.Sprintf(" AND read = $%d", position))
-			args = append(args, *filter.Read)
-			position++
-		}
-
-		if includePagination {
-			query.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
-			args = append(args, filter.Limit, filter.Offset)
-		}
-
-		return query.String(), args
+	if filter.UserID != nil {
+		query.WriteString(fmt.Sprintf(" AND user_id = $%d::uuid", position))
+		args = append(args, *filter.UserID)
+		position++
 	}
 
-	countQuery, countArgs := buildQuery(false)
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("repository postgres notifications list count: %w", err)
+	if filter.Type != nil {
+		query.WriteString(fmt.Sprintf(" AND type = $%d", position))
+		args = append(args, string(*filter.Type))
+		position++
 	}
 
-	query, args := buildQuery(true)
-	rows, err := r.pool.Query(ctx, query, args...)
+	if filter.Read != nil {
+		query.WriteString(fmt.Sprintf(" AND read = $%d", position))
+		args = append(args, *filter.Read)
+		position++
+	}
+
+	query.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := r.pool.Query(ctx, query.String(), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repository postgres notifications list query: %w", err)
 	}
 	defer rows.Close()
 
+	var total int
 	notifications := make([]domain.Notification, 0, filter.Limit)
 	for rows.Next() {
-		notification, err := scanNotificationRow(rows)
+		notification, rowTotal, err := scanNotificationRowWithTotal(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("repository postgres notifications list scan: %w", err)
 		}
+		total = rowTotal
 		notifications = append(notifications, notification)
 	}
 
@@ -174,19 +156,12 @@ func (r *NotificationRepository) MarkRead(ctx context.Context, notificationID st
 func scanNotificationRow(scanner notificationRowScanner) (domain.Notification, error) {
 	var notification domain.Notification
 	var notificationType string
-	var titleBytes []byte
-	var bodyBytes []byte
+	var titleBytes, bodyBytes []byte
 	var link sql.NullString
 
 	if err := scanner.Scan(
-		&notification.ID,
-		&notification.UserID,
-		&notificationType,
-		&titleBytes,
-		&bodyBytes,
-		&link,
-		&notification.Read,
-		&notification.CreatedAt,
+		&notification.ID, &notification.UserID, &notificationType,
+		&titleBytes, &bodyBytes, &link, &notification.Read, &notification.CreatedAt,
 	); err != nil {
 		return domain.Notification{}, err
 	}
@@ -194,15 +169,40 @@ func scanNotificationRow(scanner notificationRowScanner) (domain.Notification, e
 	if err := notification.Title.Scan(titleBytes); err != nil {
 		return domain.Notification{}, fmt.Errorf("repository postgres scan notification title: %w", err)
 	}
-
 	if len(bodyBytes) > 0 {
 		if err := notification.Body.Scan(bodyBytes); err != nil {
 			return domain.Notification{}, fmt.Errorf("repository postgres scan notification body: %w", err)
 		}
 	}
-
 	notification.Type = domain.NotificationType(notificationType)
 	notification.Link = optionalString(link)
-
 	return notification, nil
+}
+
+func scanNotificationRowWithTotal(scanner notificationRowScanner) (domain.Notification, int, error) {
+	var notification domain.Notification
+	var notificationType string
+	var titleBytes, bodyBytes []byte
+	var link sql.NullString
+	var total int
+
+	if err := scanner.Scan(
+		&notification.ID, &notification.UserID, &notificationType,
+		&titleBytes, &bodyBytes, &link, &notification.Read, &notification.CreatedAt,
+		&total,
+	); err != nil {
+		return domain.Notification{}, 0, err
+	}
+
+	if err := notification.Title.Scan(titleBytes); err != nil {
+		return domain.Notification{}, 0, fmt.Errorf("repository postgres scan notification title: %w", err)
+	}
+	if len(bodyBytes) > 0 {
+		if err := notification.Body.Scan(bodyBytes); err != nil {
+			return domain.Notification{}, 0, fmt.Errorf("repository postgres scan notification body: %w", err)
+		}
+	}
+	notification.Type = domain.NotificationType(notificationType)
+	notification.Link = optionalString(link)
+	return notification, total, nil
 }

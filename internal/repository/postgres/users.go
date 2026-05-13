@@ -20,6 +20,7 @@ const userSelectColumns = `
 	u.password_hash,
 	u.is_admin,
 	u.is_super_admin,
+	u.must_change_password,
 	u.first_name,
 	u.last_name,
 	u.patronymic,
@@ -34,6 +35,10 @@ const userSelectColumns = `
 	u.updated_at
 `
 
+const userReturnColumns = `id, email, google_id, password_hash, is_admin, is_super_admin,
+	must_change_password, first_name, last_name, patronymic, phone, is_male,
+	birth_date, address, city, avatar_url, is_active, created_at, updated_at`
+
 type userRowScanner interface {
 	Scan(dest ...any) error
 }
@@ -47,14 +52,14 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 }
 
 func (r *UserRepository) Create(ctx context.Context, params domain.CreateUserParams) (domain.User, error) {
-	var userID string
-	if err := r.pool.QueryRow(ctx, `
+	user, err := scanUser(r.pool.QueryRow(ctx, `
 		INSERT INTO users (
 			email,
 			google_id,
 			password_hash,
 			is_admin,
 			is_super_admin,
+			must_change_password,
 			first_name,
 			last_name,
 			patronymic,
@@ -65,15 +70,15 @@ func (r *UserRepository) Create(ctx context.Context, params domain.CreateUserPar
 			city,
 			avatar_url
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, '')::date, $12, $13, $14
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULLIF($12, '')::date, $13, $14, $15
 		)
-		RETURNING id
-	`,
+		RETURNING `+userReturnColumns,
 		nullableStringPointerForWrite(params.Email),
 		nullableStringPointerForWrite(params.GoogleID),
 		nullableStringPointerForWrite(params.PasswordHash),
 		params.IsAdmin,
 		params.IsSuperAdmin,
+		params.MustChangePassword,
 		nullableStringForWrite(params.FirstName),
 		nullableStringForWrite(params.LastName),
 		nullableStringForWrite(params.Patronymic),
@@ -83,13 +88,9 @@ func (r *UserRepository) Create(ctx context.Context, params domain.CreateUserPar
 		nullableStringPointerForWrite(params.Address),
 		nullableStringPointerForWrite(params.City),
 		nullableStringPointerForWrite(params.AvatarURL),
-	).Scan(&userID); err != nil {
-		return domain.User{}, wrapPGError("repository postgres users create insert", err)
-	}
-
-	user, err := r.GetByID(ctx, userID)
+	))
 	if err != nil {
-		return domain.User{}, fmt.Errorf("repository postgres users create fetch by id: %w", err)
+		return domain.User{}, wrapPGError("repository postgres users create", err)
 	}
 
 	return user, nil
@@ -155,70 +156,54 @@ func (r *UserRepository) GetByGoogleID(ctx context.Context, googleID string) (do
 }
 
 func (r *UserRepository) List(ctx context.Context, filter domain.UserListFilter) ([]domain.User, int, error) {
-	buildQuery := func(includePagination bool) (string, []any) {
-		query := strings.Builder{}
-		if includePagination {
-			query.WriteString(`SELECT ` + userSelectColumns + ` FROM users u WHERE 1 = 1`)
-		} else {
-			query.WriteString(`SELECT COUNT(*) FROM users u WHERE 1 = 1`)
-		}
+	query := strings.Builder{}
+	query.WriteString(`SELECT ` + userSelectColumns + `, COUNT(*) OVER() AS total_count FROM users u WHERE 1 = 1`)
 
-		args := make([]any, 0, 6)
-		position := 1
+	args := make([]any, 0, 6)
+	position := 1
 
-		if filter.Search != "" {
-			query.WriteString(fmt.Sprintf(`
-				AND (
-					COALESCE(u.email, '') ILIKE $%d OR
-					COALESCE(u.first_name, '') ILIKE $%d OR
-					COALESCE(u.last_name, '') ILIKE $%d OR
-					COALESCE(u.patronymic, '') ILIKE $%d
-				)
-			`, position, position, position, position))
-			args = append(args, "%"+filter.Search+"%")
-			position++
-		}
-
-		if filter.IsAdmin != nil {
-			query.WriteString(fmt.Sprintf(" AND u.is_admin = $%d", position))
-			args = append(args, *filter.IsAdmin)
-			position++
-		}
-
-		if filter.IsActive != nil {
-			query.WriteString(fmt.Sprintf(" AND u.is_active = $%d", position))
-			args = append(args, *filter.IsActive)
-			position++
-		}
-
-		if includePagination {
-			query.WriteString(fmt.Sprintf(" ORDER BY u.created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
-			args = append(args, filter.Limit, filter.Offset)
-		}
-
-		return query.String(), args
+	if filter.Search != "" {
+		query.WriteString(fmt.Sprintf(`
+			AND (
+				COALESCE(u.email, '') ILIKE $%d OR
+				COALESCE(u.first_name, '') ILIKE $%d OR
+				COALESCE(u.last_name, '') ILIKE $%d OR
+				COALESCE(u.patronymic, '') ILIKE $%d
+			)
+		`, position, position, position, position))
+		args = append(args, "%"+filter.Search+"%")
+		position++
 	}
 
-	countQuery, countArgs := buildQuery(false)
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("repository postgres users list count: %w", err)
+	if filter.IsAdmin != nil {
+		query.WriteString(fmt.Sprintf(" AND u.is_admin = $%d", position))
+		args = append(args, *filter.IsAdmin)
+		position++
 	}
 
-	query, args := buildQuery(true)
-	rows, err := r.pool.Query(ctx, query, args...)
+	if filter.IsActive != nil {
+		query.WriteString(fmt.Sprintf(" AND u.is_active = $%d", position))
+		args = append(args, *filter.IsActive)
+		position++
+	}
+
+	query.WriteString(fmt.Sprintf(" ORDER BY u.created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := r.pool.Query(ctx, query.String(), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repository postgres users list query: %w", err)
 	}
 	defer rows.Close()
 
+	var total int
 	users := make([]domain.User, 0, filter.Limit)
 	for rows.Next() {
-		user, err := scanUser(rows)
+		user, rowTotal, err := scanUserWithTotal(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("repository postgres users list scan: %w", err)
 		}
-
+		total = rowTotal
 		users = append(users, user)
 	}
 
@@ -230,8 +215,7 @@ func (r *UserRepository) List(ctx context.Context, filter domain.UserListFilter)
 }
 
 func (r *UserRepository) Update(ctx context.Context, params domain.UpdateUserParams) (domain.User, error) {
-	var userID string
-	if err := r.pool.QueryRow(ctx, `
+	user, err := scanUser(r.pool.QueryRow(ctx, `
 		UPDATE users
 		SET
 			email = $2,
@@ -239,26 +223,27 @@ func (r *UserRepository) Update(ctx context.Context, params domain.UpdateUserPar
 			password_hash = COALESCE($4, password_hash),
 			is_admin = CASE WHEN is_super_admin THEN true ELSE $5 END,
 			is_super_admin = CASE WHEN is_super_admin THEN true ELSE COALESCE($6, is_super_admin) END,
-			first_name = $7,
-			last_name = $8,
-			patronymic = $9,
-			phone = $10,
-			is_male = $11,
-			birth_date = NULLIF($12, '')::date,
-			address = $13,
-			city = $14,
-			avatar_url = $15,
-			is_active = $16,
+			must_change_password = COALESCE($7, must_change_password),
+			first_name = $8,
+			last_name = $9,
+			patronymic = $10,
+			phone = $11,
+			is_male = $12,
+			birth_date = NULLIF($13, '')::date,
+			address = $14,
+			city = $15,
+			avatar_url = $16,
+			is_active = $17,
 			updated_at = NOW()
 		WHERE id = $1
-		RETURNING id
-	`,
+		RETURNING `+userReturnColumns,
 		params.ID,
 		nullableStringPointerForWrite(params.Email),
 		nullableStringPointerForWrite(params.GoogleID),
 		nullableStringPointerForWrite(params.PasswordHash),
 		params.IsAdmin,
 		nullableBoolPointerForWrite(params.IsSuperAdmin),
+		nullableBoolPointerForWrite(params.MustChangePassword),
 		nullableStringForWrite(params.FirstName),
 		nullableStringForWrite(params.LastName),
 		nullableStringForWrite(params.Patronymic),
@@ -269,17 +254,13 @@ func (r *UserRepository) Update(ctx context.Context, params domain.UpdateUserPar
 		nullableStringPointerForWrite(params.City),
 		nullableStringPointerForWrite(params.AvatarURL),
 		params.IsActive,
-	).Scan(&userID); err != nil {
+	))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.User{}, fmt.Errorf("repository postgres users update: %w", domain.ErrNotFound)
 		}
 
 		return domain.User{}, wrapPGError("repository postgres users update", err)
-	}
-
-	user, err := r.GetByID(ctx, userID)
-	if err != nil {
-		return domain.User{}, fmt.Errorf("repository postgres users update fetch by id: %w", err)
 	}
 
 	return user, nil
@@ -288,12 +269,7 @@ func (r *UserRepository) Update(ctx context.Context, params domain.UpdateUserPar
 func (r *UserRepository) Deactivate(ctx context.Context, userID string) error {
 	var returnedID string
 	if err := r.pool.QueryRow(ctx, `
-		UPDATE users
-		SET
-			is_active = false,
-			updated_at = NOW()
-		WHERE id = $1
-		RETURNING id
+		DELETE FROM users WHERE id = $1 RETURNING id
 	`, userID).Scan(&returnedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("repository postgres users deactivate: %w", domain.ErrNotFound)
@@ -306,15 +282,16 @@ func (r *UserRepository) Deactivate(ctx context.Context, userID string) error {
 }
 
 func (r *UserRepository) LinkGoogleID(ctx context.Context, userID, googleID string) (domain.User, error) {
-	var returnedID string
-	if err := r.pool.QueryRow(ctx, `
+	user, err := scanUser(r.pool.QueryRow(ctx, `
 		UPDATE users
 		SET
 			google_id = $2,
 			updated_at = NOW()
 		WHERE id = $1
-		RETURNING id
-	`, userID, googleID).Scan(&returnedID); err != nil {
+		RETURNING `+userReturnColumns,
+		userID, googleID,
+	))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.User{}, fmt.Errorf("repository postgres users link google id: %w", domain.ErrNotFound)
 		}
@@ -322,12 +299,45 @@ func (r *UserRepository) LinkGoogleID(ctx context.Context, userID, googleID stri
 		return domain.User{}, wrapPGError("repository postgres users link google id", err)
 	}
 
-	user, err := r.GetByID(ctx, returnedID)
-	if err != nil {
-		return domain.User{}, fmt.Errorf("repository postgres users link google id fetch by id: %w", err)
+	return user, nil
+}
+
+func scanUserWithTotal(scanner userRowScanner) (domain.User, int, error) {
+	var user domain.User
+	var email, googleID, passwordHash sql.NullString
+	var firstName, lastName, patronymic sql.NullString
+	var phone, address, city, avatarURL sql.NullString
+	var isMale sql.NullBool
+	var birthDate sql.NullTime
+	var total int
+
+	if err := scanner.Scan(
+		&user.ID, &email, &googleID, &passwordHash,
+		&user.IsAdmin, &user.IsSuperAdmin, &user.MustChangePassword,
+		&firstName, &lastName, &patronymic, &phone, &isMale, &birthDate,
+		&address, &city, &avatarURL, &user.IsActive,
+		&user.CreatedAt, &user.UpdatedAt,
+		&total,
+	); err != nil {
+		return domain.User{}, 0, err
 	}
 
-	return user, nil
+	user.Email = optionalString(email)
+	user.GoogleID = optionalString(googleID)
+	user.PasswordHash = optionalString(passwordHash)
+	user.FirstName = firstName.String
+	user.LastName = lastName.String
+	user.Patronymic = patronymic.String
+	user.Phone = optionalString(phone)
+	if isMale.Valid {
+		user.IsMale = &isMale.Bool
+	}
+	user.BirthDate = optionalDateString(birthDate)
+	user.Address = optionalString(address)
+	user.City = optionalString(city)
+	user.AvatarURL = optionalString(avatarURL)
+
+	return user, total, nil
 }
 
 func scanUser(scanner userRowScanner) (domain.User, error) {
@@ -352,6 +362,7 @@ func scanUser(scanner userRowScanner) (domain.User, error) {
 		&passwordHash,
 		&user.IsAdmin,
 		&user.IsSuperAdmin,
+		&user.MustChangePassword,
 		&firstName,
 		&lastName,
 		&patronymic,

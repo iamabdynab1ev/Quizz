@@ -14,16 +14,35 @@ type SessionCache struct {
 	now   func() time.Time
 }
 
+const evictionInterval = 5 * time.Minute
+
 type sessionCacheEntry struct {
 	identity  domain.AuthIdentity
 	expiresAt *time.Time
 }
 
 func NewSessionCache(ttl time.Duration) *SessionCache {
-	return &SessionCache{
+	c := &SessionCache{
 		items: make(map[string]sessionCacheEntry),
 		ttl:   ttl,
 		now:   time.Now,
+	}
+	go c.runEviction()
+	return c
+}
+
+func (c *SessionCache) runEviction() {
+	ticker := time.NewTicker(evictionInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		now := c.now().UTC()
+		c.mu.Lock()
+		for token, entry := range c.items {
+			if entry.expiresAt != nil && !entry.expiresAt.After(now) {
+				delete(c.items, token)
+			}
+		}
+		c.mu.Unlock()
 	}
 }
 

@@ -134,91 +134,91 @@ func (r *CourseRepository) GetByID(ctx context.Context, courseID string) (domain
 }
 
 func (r *CourseRepository) List(ctx context.Context, filter domain.CourseListFilter) ([]domain.Course, int, error) {
-	buildQuery := func(includePagination bool) (string, []any) {
-		query := strings.Builder{}
-		if includePagination {
-			query.WriteString(`
-				SELECT
-					id, title, description, cover_image_url, video_url, category,
-					status, platforms, estimated_minutes, certificate_enabled,
-					certificate_passing_score, reviews_enabled,
-					quiz_pass_percent, quiz_minutes, max_attempts, retake_cooldown_days,
-					created_by_user_id, created_by_name,
-					created_at, updated_at
-				FROM courses
-				WHERE 1 = 1
-			`)
-		} else {
-			query.WriteString(`SELECT COUNT(*) FROM courses WHERE 1 = 1`)
-		}
+	query := strings.Builder{}
+	query.WriteString(`
+		SELECT
+			id, title, description, cover_image_url, video_url, category,
+			status, platforms, estimated_minutes, certificate_enabled,
+			certificate_passing_score, reviews_enabled,
+			quiz_pass_percent, quiz_minutes, max_attempts, retake_cooldown_days,
+			created_by_user_id, created_by_name,
+			created_at, updated_at,
+			COUNT(*) OVER() AS total_count
+		FROM courses
+		WHERE 1 = 1
+	`)
 
-		args := make([]any, 0, 6)
-		position := 1
+	args := make([]any, 0, 6)
+	position := 1
 
-		if filter.Search != "" {
-			query.WriteString(fmt.Sprintf(`
-				AND (
-					title->>'ru' ILIKE $%d OR
-					title->>'tj' ILIKE $%d OR
-					COALESCE(category, '') ILIKE $%d
-				)
-			`, position, position, position))
-			args = append(args, "%"+filter.Search+"%")
-			position++
-		}
-
-		if filter.Status != nil {
-			query.WriteString(fmt.Sprintf(" AND status = $%d", position))
-			args = append(args, string(*filter.Status))
-			position++
-		} else if !filter.IncludeArchived {
-			query.WriteString(" AND status <> 'archived'")
-		}
-
-		if filter.Category != nil {
-			query.WriteString(fmt.Sprintf(" AND category = $%d", position))
-			args = append(args, *filter.Category)
-			position++
-		}
-
-		if filter.Platform != nil {
-			query.WriteString(fmt.Sprintf(" AND $%d = ANY(platforms)", position))
-			args = append(args, string(*filter.Platform))
-			position++
-		}
-
-		if includePagination {
-			query.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
-			args = append(args, filter.Limit, filter.Offset)
-		}
-
-		return query.String(), args
+	if filter.Search != "" {
+		query.WriteString(fmt.Sprintf(`
+			AND (
+				title->>'ru' ILIKE $%d OR
+				title->>'tj' ILIKE $%d OR
+				COALESCE(category, '') ILIKE $%d
+			)
+		`, position, position, position))
+		args = append(args, "%"+filter.Search+"%")
+		position++
 	}
 
-	countQuery, countArgs := buildQuery(false)
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("repository postgres courses list count: %w", err)
+	if filter.Status != nil {
+		query.WriteString(fmt.Sprintf(" AND status = $%d", position))
+		args = append(args, string(*filter.Status))
+		position++
+	} else if !filter.IncludeArchived {
+		query.WriteString(" AND status <> 'archived'")
 	}
 
-	query, args := buildQuery(true)
-	rows, err := r.pool.Query(ctx, query, args...)
+	if filter.Category != nil {
+		query.WriteString(fmt.Sprintf(" AND category = $%d", position))
+		args = append(args, *filter.Category)
+		position++
+	}
+
+	if filter.Platform != nil {
+		query.WriteString(fmt.Sprintf(" AND $%d = ANY(platforms)", position))
+		args = append(args, string(*filter.Platform))
+		position++
+	}
+
+	query.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := r.pool.Query(ctx, query.String(), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repository postgres courses list query: %w", err)
 	}
 	defer rows.Close()
 
+	var total int
 	courses := make([]domain.Course, 0, filter.Limit)
 	for rows.Next() {
-		course, err := scanCourse(rows)
+		course, rowTotal, err := scanCourseWithTotal(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("repository postgres courses list scan: %w", err)
 		}
+		total = rowTotal
 		courses = append(courses, course)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("repository postgres courses list rows: %w", err)
+	}
+
+	if len(courses) > 0 {
+		courseIDs := make([]string, len(courses))
+		for i, c := range courses {
+			courseIDs[i] = c.ID
+		}
+		questionsByCourse, err := listQuestionsByCourseIDs(ctx, r.pool, courseIDs)
+		if err != nil {
+			return nil, 0, fmt.Errorf("repository postgres courses list questions: %w", err)
+		}
+		for i := range courses {
+			courses[i].Questions = questionsByCourse[courses[i].ID]
+		}
 	}
 
 	return courses, total, nil
@@ -306,10 +306,7 @@ func (r *CourseRepository) Update(ctx context.Context, params domain.UpdateCours
 func (r *CourseRepository) Archive(ctx context.Context, courseID string) error {
 	var returnedID string
 	if err := r.pool.QueryRow(ctx, `
-		UPDATE courses
-		SET status = 'archived', updated_at = NOW()
-		WHERE id = $1
-		RETURNING id
+		DELETE FROM courses WHERE id = $1 RETURNING id
 	`, courseID).Scan(&returnedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("repository postgres courses archive: %w", domain.ErrNotFound)
@@ -380,6 +377,124 @@ func listQuestionsByCourseID(ctx context.Context, pool *pgxpool.Pool, courseID s
 	}
 
 	return questions, nil
+}
+
+func scanCourseWithTotal(scanner courseRowScanner) (domain.Course, int, error) {
+	var course domain.Course
+	var titleBytes []byte
+	var descriptionBytes []byte
+	var coverImageURL sql.NullString
+	var videoURL sql.NullString
+	var category sql.NullString
+	var status string
+	var platforms []string
+	var estimatedMinutes sql.NullInt32
+	var createdByUserID sql.NullString
+	var createdByName sql.NullString
+	var total int
+
+	if err := scanner.Scan(
+		&course.ID,
+		&titleBytes,
+		&descriptionBytes,
+		&coverImageURL,
+		&videoURL,
+		&category,
+		&status,
+		&platforms,
+		&estimatedMinutes,
+		&course.CertificateEnabled,
+		&course.CertificatePassingScore,
+		&course.ReviewsEnabled,
+		&course.QuizPassPercent,
+		&course.QuizMinutes,
+		&course.MaxAttempts,
+		&course.RetakeCooldownDays,
+		&createdByUserID,
+		&createdByName,
+		&course.CreatedAt,
+		&course.UpdatedAt,
+		&total,
+	); err != nil {
+		return domain.Course{}, 0, err
+	}
+
+	if err := course.Title.Scan(titleBytes); err != nil {
+		return domain.Course{}, 0, fmt.Errorf("repository postgres scan course title: %w", err)
+	}
+
+	if len(descriptionBytes) > 0 {
+		if err := course.Description.Scan(descriptionBytes); err != nil {
+			return domain.Course{}, 0, fmt.Errorf("repository postgres scan course description: %w", err)
+		}
+	}
+
+	course.CoverImageURL = optionalString(coverImageURL)
+	course.VideoURL = optionalString(videoURL)
+	course.Category = optionalString(category)
+	course.Status = domain.CourseStatus(status)
+	course.Platforms = stringsToPlatforms(platforms)
+	course.EstimatedMinutes = optionalInt(estimatedMinutes)
+	if createdByUserID.Valid {
+		course.CreatedByUserID = &createdByUserID.String
+	}
+	if createdByName.Valid {
+		course.CreatedByName = createdByName.String
+	}
+
+	return course, total, nil
+}
+
+func listQuestionsByCourseIDs(ctx context.Context, pool *pgxpool.Pool, courseIDs []string) (map[string][]domain.Question, error) {
+	if len(courseIDs) == 0 {
+		return map[string][]domain.Question{}, nil
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT course_id, id, position, type, prompt, points, required, config, created_at
+		FROM questions
+		WHERE course_id = ANY($1::uuid[])
+		ORDER BY course_id, position ASC
+	`, courseIDs)
+	if err != nil {
+		return nil, fmt.Errorf("repository postgres courses list questions batch query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string][]domain.Question, len(courseIDs))
+	for rows.Next() {
+		var courseID string
+		var question domain.Question
+		var promptBytes []byte
+		var questionType string
+
+		if err := rows.Scan(
+			&courseID,
+			&question.ID,
+			&question.Position,
+			&questionType,
+			&promptBytes,
+			&question.Points,
+			&question.Required,
+			&question.Config,
+			&question.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("repository postgres courses list questions batch scan: %w", err)
+		}
+
+		if err := question.Prompt.Scan(promptBytes); err != nil {
+			return nil, fmt.Errorf("repository postgres courses list questions batch prompt: %w", err)
+		}
+
+		question.Type = domain.QuestionType(questionType)
+		result[courseID] = append(result[courseID], question)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("repository postgres courses list questions batch rows: %w", err)
+	}
+
+	return result, nil
 }
 
 func scanCourse(scanner courseRowScanner) (domain.Course, error) {

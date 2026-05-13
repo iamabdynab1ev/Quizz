@@ -174,13 +174,13 @@ PUT /api/v1/auth/me
 
 ```json
 {
-  "field": "passing_points",
-  "code": "too_high",
-  "message": "Баллы для прохождения не могут быть больше максимального балла теста (10.00)"
+  "field": "quiz_pass_percent",
+  "code": "out_of_range",
+  "message": "Значение проходного процента должно быть от 0 до 100"
 }
 ```
 
-Нужно показать message и подсветить input `passing_points` / `passingPoints`.
+Нужно показать message и подсветить input `quiz_pass_percent` / `passPercent`.
 
 Если пришло:
 
@@ -195,26 +195,26 @@ PUT /api/v1/auth/me
 
 ## Курсы и тесты
 
-Курс может иметь `video_url` и `quiz_id`.
+Курс может иметь `video_url` и встроенные quiz-настройки. Отдельного quiz identifier в public course response больше нет; frontend может использовать `course.id` как идентификатор quiz compatibility endpoint.
 
 Тест создаётся с:
 
 ```json
 {
-  "passingPoints": 8,
-  "maxAttempts": 3,
-  "retakeCooldownDays": 30,
+  "quiz_pass_percent": 80,
+  "max_attempts": 3,
+  "retake_cooldown_days": 0,
   "questions": []
 }
 ```
 
-Backend сам считает максимум баллов по вопросам:
+Backend сам считает процент результата по вопросам:
 
 - 5 вопросов по 1 баллу -> максимум 5;
 - 10 вопросов по 1 баллу -> максимум 10;
 - вопросы 2 + 3 + 5 -> максимум 10.
 
-`passingPoints` нельзя ставить больше максимума.
+Попытка считается успешной, если `score_percent >= quiz_pass_percent`.
 
 ## Правильные ответы
 
@@ -236,7 +236,7 @@ Admin при создании теста может отправлять эти 
 Submit:
 
 ```text
-POST /api/v1/quizzes/{quizID}/attempts
+POST /api/v1/courses/{courseID}/attempts
 ```
 
 Этот запрос protected. Нужен `Authorization: Bearer <token>`.
@@ -244,8 +244,8 @@ POST /api/v1/quizzes/{quizID}/attempts
 Сертификат выдаётся, если:
 
 - попытка `passed=true`;
-- `total_earned >= passing_points`;
-- тест связан с курсом;
+- `score_percent >= quiz_pass_percent`;
+- attempt относится к этому `course_id`;
 - сертификат ещё не выдавался.
 
 После получения сертификата:
@@ -289,8 +289,8 @@ POST /api/v1/uploads
 2. `auth/me` после refresh страницы.
 3. Создание курса с video_url.
 4. Список курсов после создания/удаления.
-5. Создание теста с вопросами.
-6. Ошибка, если `passingPoints` больше суммы баллов вопросов.
+5. Создание теста с вопросами внутри курса.
+6. Ошибка, если `quiz_pass_percent` вне диапазона 1..100.
 7. Сдача теста ниже проходного балла.
 8. Сдача теста выше проходного балла.
 9. Получение сертификата.

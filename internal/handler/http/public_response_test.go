@@ -64,7 +64,6 @@ func TestPublicResponsesDoNotExposeInternalFields(t *testing.T) {
 	assertJSONDoesNotContain(t, quizBody,
 		"status",
 		"platforms",
-		"passing_points",
 		"shuffle_questions",
 		"show_results",
 		"is_correct",
@@ -81,7 +80,6 @@ func TestPublicResponsesDoNotExposeInternalFields(t *testing.T) {
 	assertJSONDoesNotContain(t, attemptBody,
 		"questions_snapshot",
 		"answers_data",
-		"needs_review",
 		"is_correct",
 	)
 

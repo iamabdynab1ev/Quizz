@@ -13,7 +13,7 @@ func TestWriteAppErrorSingleFieldUsesFlatResponse(t *testing.T) {
 	recorder := httptest.NewRecorder()
 
 	writeAppError(recorder, domain.FieldValidationError("Проверьте поля формы",
-		domain.ValidationField("passing_points", "too_high", "Баллы для прохождения не могут быть больше максимального балла теста"),
+		domain.ValidationField("quiz_pass_percent", "out_of_range", "Значение проходного процента должно быть от 0 до 100"),
 	))
 
 	if recorder.Code != nethttp.StatusBadRequest {
@@ -25,11 +25,11 @@ func TestWriteAppErrorSingleFieldUsesFlatResponse(t *testing.T) {
 		t.Fatalf("unmarshal response: %v", err)
 	}
 
-	if body["field"] != "passing_points" {
-		t.Fatalf("field = %v, want passing_points", body["field"])
+	if body["field"] != "quiz_pass_percent" {
+		t.Fatalf("field = %v, want quiz_pass_percent", body["field"])
 	}
-	if body["code"] != "too_high" {
-		t.Fatalf("code = %v, want too_high", body["code"])
+	if body["code"] != "out_of_range" {
+		t.Fatalf("code = %v, want out_of_range", body["code"])
 	}
 	if body["message"] == "" {
 		t.Fatalf("message must not be empty")

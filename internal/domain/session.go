@@ -33,19 +33,20 @@ type GoogleLoginParams struct {
 }
 
 type RegisterParams struct {
-	Email      string  `json:"email"`
-	Password   string  `json:"password"`
-	FirstName  string  `json:"first_name"`
-	LastName   string  `json:"last_name"`
-	Patronymic string  `json:"patronymic,omitempty"`
-	Phone      *string `json:"phone,omitempty"`
-	IsMale     *bool   `json:"is_male,omitempty"`
-	Address    *string `json:"address,omitempty"`
-	City       *string `json:"city,omitempty"`
-	AvatarURL  *string `json:"avatar_url,omitempty"`
-	BirthDate  *string `json:"birth_date,omitempty"`
-	IPAddress  *string `json:"-"`
-	UserAgent  *string `json:"-"`
+	Email          string  `json:"email"`
+	Password       string  `json:"password"`
+	FirstName      string  `json:"first_name"`
+	LastName       string  `json:"last_name"`
+	Patronymic     string  `json:"patronymic,omitempty"`
+	Phone          *string `json:"phone,omitempty"`
+	IsMale         *bool   `json:"is_male,omitempty"`
+	Address        *string `json:"address,omitempty"`
+	City           *string `json:"city,omitempty"`
+	AvatarURL      *string `json:"avatar_url,omitempty"`
+	BirthDate      *string `json:"birth_date,omitempty"`
+	RecaptchaToken string  `json:"recaptcha_token,omitempty"`
+	IPAddress      *string `json:"-"`
+	UserAgent      *string `json:"-"`
 }
 
 type UpdateProfileParams struct {

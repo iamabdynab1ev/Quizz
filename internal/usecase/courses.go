@@ -155,10 +155,25 @@ func normalizeCreateCourseParams(params domain.CreateCourseParams) (domain.Creat
 		validation.add("estimated_minutes", "must_be_positive", "Длительность курса должна быть больше 0")
 	}
 
+	params.QuizPassPercent, params.QuizMinutes, params.MaxAttempts, params.RetakeCooldownDays =
+		normalizeQuizScoringAndAttempts(
+			params.QuizPassPercent,
+			params.QuizMinutes,
+			params.MaxAttempts,
+			params.RetakeCooldownDays,
+			&validation,
+		)
+
 	validation.addIntRange("certificate_passing_score", params.CertificatePassingScore, 0, 100, "Процент для сертификата")
 	if err := validation.err(); err != nil {
 		return domain.CreateCourseParams{}, err
 	}
+
+	questions, err := normalizeQuestionPayloads(params.Questions)
+	if err != nil {
+		return domain.CreateCourseParams{}, err
+	}
+	params.Questions = questions
 
 	return params, nil
 }
@@ -179,6 +194,10 @@ func normalizeUpdateCourseParams(params domain.UpdateCourseParams) (domain.Updat
 		validation.add("status", "invalid_enum", "Статус курса должен быть draft, published или archived")
 	}
 
+	if !params.CertificateEnabled {
+		params.CertificateEnabled = true
+	}
+
 	if err := normalizePlatforms(&params.Platforms); err != nil {
 		validation.add("platforms", "invalid_enum", "Платформа должна быть web, mobile или telegram")
 	}
@@ -187,10 +206,25 @@ func normalizeUpdateCourseParams(params domain.UpdateCourseParams) (domain.Updat
 		validation.add("estimated_minutes", "must_be_positive", "Длительность курса должна быть больше 0")
 	}
 
+	params.QuizPassPercent, params.QuizMinutes, params.MaxAttempts, params.RetakeCooldownDays =
+		normalizeQuizScoringAndAttempts(
+			params.QuizPassPercent,
+			params.QuizMinutes,
+			params.MaxAttempts,
+			params.RetakeCooldownDays,
+			&validation,
+		)
+
 	validation.addIntRange("certificate_passing_score", params.CertificatePassingScore, 0, 100, "Процент для сертификата")
 	if err := validation.err(); err != nil {
 		return domain.UpdateCourseParams{}, err
 	}
+
+	questions, err := normalizeQuestionPayloads(params.Questions)
+	if err != nil {
+		return domain.UpdateCourseParams{}, err
+	}
+	params.Questions = questions
 
 	return params, nil
 }

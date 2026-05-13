@@ -38,6 +38,9 @@ func NewRouter(
 	router.Use(chimiddleware.RealIP)
 	router.Use(chimiddleware.RequestID)
 	router.Use(chimiddleware.Recoverer)
+	router.Use(chimiddleware.Compress(5, "application/json", "text/plain", "text/html"))
+	router.Use(chimiddleware.Throttle(1000))
+	router.Use(middleware.RateLimit(middleware.NewIPRateLimiter(100, 200)))
 	router.Use(middleware.RequestLogger(logger))
 
 	if uploadsRoot := strings.TrimSpace(uploadsDir); uploadsRoot != "" {
@@ -165,6 +168,11 @@ func NewRouter(
 				})
 			}
 
+			if uploadsHandler != nil {
+				protected.Post("/uploads", uploadsHandler.CreateUpload)
+				protected.Post("/uploads/", uploadsHandler.CreateUpload)
+			}
+
 			if reviewsHandler != nil {
 				protected.Route("/reviews", func(reviews chi.Router) {
 					reviews.Get("/", reviewsHandler.ListReviews)
@@ -204,11 +212,6 @@ func NewRouter(
 						webhooks.Put("/{webhookID}", webhooksHandler.UpdateWebhook)
 						webhooks.Delete("/{webhookID}", webhooksHandler.DeleteWebhook)
 					})
-				}
-
-				if uploadsHandler != nil {
-					admin.Post("/uploads", uploadsHandler.CreateUpload)
-					admin.Post("/uploads/", uploadsHandler.CreateUpload)
 				}
 
 				if auditLogsHandler != nil {

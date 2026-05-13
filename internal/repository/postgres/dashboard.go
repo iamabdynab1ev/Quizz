@@ -136,7 +136,7 @@ func (r *DashboardRepository) getAdminStats(ctx context.Context) (domain.AdminDa
 		SELECT
 			COUNT(*)::int,
 			COUNT(*) FILTER (WHERE is_active = true)::int,
-			COUNT(*) FILTER (WHERE role = 'student')::int
+			COUNT(*) FILTER (WHERE is_admin = false)::int
 		FROM users
 	`).Scan(&stats.UsersTotal, &stats.ActiveUsers, &stats.StudentsTotal); err != nil {
 		return domain.AdminDashboardStats{}, fmt.Errorf("repository postgres dashboard admin user stats: %w", err)
@@ -155,7 +155,7 @@ func (r *DashboardRepository) getAdminStats(ctx context.Context) (domain.AdminDa
 		SELECT
 			COUNT(*)::int,
 			COUNT(*) FILTER (WHERE status = 'published')::int
-		FROM quizzes
+		FROM courses
 	`).Scan(&stats.QuizzesTotal, &stats.PublishedQuizzes); err != nil {
 		return domain.AdminDashboardStats{}, fmt.Errorf("repository postgres dashboard admin quiz stats: %w", err)
 	}
@@ -173,7 +173,7 @@ func (r *DashboardRepository) getAdminStats(ctx context.Context) (domain.AdminDa
 		SELECT
 			COUNT(*)::int,
 			COUNT(*) FILTER (WHERE passed = true)::int,
-			COUNT(*) FILTER (WHERE needs_review = true)::int
+			0::int
 		FROM attempts
 	`).Scan(&stats.AttemptsTotal, &stats.PassedAttempts, &stats.AttemptsNeedReview); err != nil {
 		return domain.AdminDashboardStats{}, fmt.Errorf("repository postgres dashboard admin attempt stats: %w", err)

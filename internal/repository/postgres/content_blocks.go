@@ -76,59 +76,45 @@ func (r *ContentBlockRepository) GetByID(ctx context.Context, blockID string) (d
 }
 
 func (r *ContentBlockRepository) List(ctx context.Context, filter domain.ContentBlockListFilter) ([]domain.ContentBlock, int, error) {
-	buildQuery := func(includePagination bool) (string, []any) {
-		query := strings.Builder{}
-		if includePagination {
-			query.WriteString(`
-				SELECT id, course_id::text, module_id::text, position, type, title, payload
-				FROM content_blocks
-				WHERE 1 = 1
-			`)
-		} else {
-			query.WriteString(`
-				SELECT COUNT(*)
-				FROM content_blocks
-				WHERE 1 = 1
-			`)
-		}
+	query := strings.Builder{}
+	query.WriteString(`
+		SELECT id, course_id::text, module_id::text, position, type, title, payload,
+			COUNT(*) OVER() AS total_count
+		FROM content_blocks
+		WHERE 1 = 1
+	`)
 
-		args := make([]any, 0, 2)
-		if filter.CourseID != nil {
-			query.WriteString(` AND course_id = $1::uuid`)
-			args = append(args, *filter.CourseID)
-		}
+	args := make([]any, 0, 3)
+	position := 1
 
-		if filter.ModuleID != nil {
-			query.WriteString(` AND module_id = $1::uuid`)
-			args = append(args, *filter.ModuleID)
-		}
-
-		if includePagination {
-			query.WriteString(` ORDER BY position ASC`)
-		}
-
-		return query.String(), args
+	if filter.CourseID != nil {
+		query.WriteString(fmt.Sprintf(` AND course_id = $%d::uuid`, position))
+		args = append(args, *filter.CourseID)
+		position++
 	}
 
-	countQuery, countArgs := buildQuery(false)
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("repository postgres content blocks list count: %w", err)
+	if filter.ModuleID != nil {
+		query.WriteString(fmt.Sprintf(` AND module_id = $%d::uuid`, position))
+		args = append(args, *filter.ModuleID)
+		position++
 	}
 
-	query, args := buildQuery(true)
-	rows, err := r.pool.Query(ctx, query, args...)
+	query.WriteString(` ORDER BY position ASC`)
+
+	rows, err := r.pool.Query(ctx, query.String(), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repository postgres content blocks list query: %w", err)
 	}
 	defer rows.Close()
 
+	var total int
 	blocks := make([]domain.ContentBlock, 0)
 	for rows.Next() {
-		block, err := scanContentBlockRow(rows)
+		block, rowTotal, err := scanContentBlockRowWithTotal(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("repository postgres content blocks list scan: %w", err)
 		}
+		total = rowTotal
 		blocks = append(blocks, block)
 	}
 
@@ -187,6 +173,40 @@ func (r *ContentBlockRepository) Delete(ctx context.Context, blockID string) err
 	}
 
 	return nil
+}
+
+func scanContentBlockRowWithTotal(scanner contentBlockRowScanner) (domain.ContentBlock, int, error) {
+	var block domain.ContentBlock
+	var courseID sql.NullString
+	var moduleID sql.NullString
+	var blockType string
+	var titleBytes []byte
+	var total int
+
+	if err := scanner.Scan(
+		&block.ID,
+		&courseID,
+		&moduleID,
+		&block.Position,
+		&blockType,
+		&titleBytes,
+		&block.Payload,
+		&total,
+	); err != nil {
+		return domain.ContentBlock{}, 0, err
+	}
+
+	if len(titleBytes) > 0 {
+		if err := block.Title.Scan(titleBytes); err != nil {
+			return domain.ContentBlock{}, 0, fmt.Errorf("repository postgres scan content block title: %w", err)
+		}
+	}
+
+	block.CourseID = optionalString(courseID)
+	block.ModuleID = optionalString(moduleID)
+	block.Type = domain.ContentBlockType(blockType)
+
+	return block, total, nil
 }
 
 func scanContentBlockRow(scanner contentBlockRowScanner) (domain.ContentBlock, error) {

@@ -111,7 +111,6 @@ go vet ./...
 - `AUTH_PASSWORD_RESET_TOKEN_TTL=15m`
 - `AUTH_PASSWORD_RESET_RETURN_TOKEN=false|true`
 - `GOOGLE_CLIENT_ID=...apps.googleusercontent.com`
-- `AUTH_GOOGLE_DEFAULT_ROLE=student`
 - `UPLOADS_DIR=uploads`
 - `UPLOAD_MAX_SIZE_MB=20`
 - `MIGRATE_RUN_ON_START=true`
@@ -198,7 +197,7 @@ Google login:
 
 - frontend получает Google ID token через Google SDK;
 - backend проверяет token через Google;
-- новый пользователь получает роль из `AUTH_GOOGLE_DEFAULT_ROLE`, по умолчанию `student`;
+- новый пользователь создаётся как обычный клиент (`is_admin=false`);
 - нужен реальный `GOOGLE_CLIENT_ID`.
 
 ## Ошибки API
@@ -216,9 +215,9 @@ Google login:
 
 ```json
 {
-  "field": "passing_points",
-  "code": "too_high",
-  "message": "Баллы для прохождения не могут быть больше максимального балла теста (10.00)"
+  "field": "quiz_pass_percent",
+  "code": "out_of_range",
+  "message": "Значение проходного процента должно быть от 0 до 100"
 }
 ```
 
@@ -257,9 +256,12 @@ HTTP mapping:
 - `description`
 - `cover_image_url`
 - `video_url`
-- `quiz_id`
 - `category`
 - `estimated_minutes`
+- `quiz_pass_percent`
+- `quiz_minutes`
+- `max_attempts`
+- `retake_cooldown_days`
 - timestamps
 
 В public response скрыты внутренние поля:
@@ -270,7 +272,7 @@ HTTP mapping:
 - `certificate_passing_score`
 - `reviews_enabled`
 
-Удаление курса - soft delete через `status=archived`. Архивные курсы не должны попадать во frontend list.
+Удаление курса в текущей реализации - hard delete. Миграция `00019_hard_delete_cascade.sql` переводит связанные attempts/certificates на cascade delete.
 
 ## Тесты и вопросы
 
@@ -279,13 +281,10 @@ Quiz содержит:
 - `title`
 - `description`
 - `course_id`
-- `category`
 - `time_limit_minutes`
-- `passing_score` legacy процент
-- `passing_points` основной порог в баллах
+- `passing_score` процент прохождения
 - `max_attempts`
 - `retake_cooldown_days`
-- `allow_retry`
 - `questions`
 
 В public response скрыты:
@@ -295,11 +294,12 @@ Quiz содержит:
 - `shuffle_questions`
 - `show_results`
 
-Backend принимает и snake_case, и frontend camelCase:
+Backend принимает snake_case поля:
 
-- `passing_points` и `passingPoints`
-- `max_attempts` и `maxAttempts`
-- `retake_cooldown_days` и `retakeCooldownDays`
+- `passing_score` для `/quizzes`
+- `quiz_pass_percent` для `/courses`
+- `max_attempts`
+- `retake_cooldown_days`
 - `is_correct` и `isCorrect`
 - `accepted_answers` и `acceptedAnswers`
 
@@ -332,9 +332,9 @@ Backend принимает и snake_case, и frontend camelCase:
 Новая логика:
 
 - максимум теста считается динамически как сумма `points` всех вопросов;
-- `passing_points` не может быть больше этого максимума;
-- попытка считается успешной, если `total_earned >= passing_points`;
-- если `passing_points` не задан, backend fallback-ит его из legacy `passing_score`;
+- backend считает `score_percent = total_earned / total_max * 100`;
+- попытка считается успешной, если `score_percent >= quiz_pass_percent`;
+- если `quiz_pass_percent` не задан, backend использует `80`;
 - если пользователь уже получил сертификат по курсу, повторная сдача теста закрыта;
 - видео/курс остаются доступными после сертификата;
 - если попытки исчерпаны, новая сдача открывается после `retake_cooldown_days`;
@@ -343,12 +343,12 @@ Backend принимает и snake_case, и frontend camelCase:
 Пример:
 
 - в тесте 10 вопросов по 1 баллу, максимум `10`;
-- админ ставит `passingPoints=8`;
-- студент набрал `8`, `9` или `10` - `passed=true`, сертификат может быть выдан;
-- студент набрал `7` - `passed=false`, сертификат не выдаётся;
-- если админ поставит `passingPoints=11`, backend вернёт ошибку по `passing_points`.
+- админ ставит `quiz_pass_percent=80`;
+- студент набрал `8`, `9` или `10` - `score_percent >= 80`, `passed=true`, сертификат может быть выдан;
+- студент набрал `7` - `score_percent=70`, `passed=false`, сертификат не выдаётся;
+- если админ поставит `quiz_pass_percent=101`, backend вернёт ошибку по `quiz_pass_percent`.
 
-Если в тесте 5 вопросов по 1 баллу, максимум будет `5`, и `passingPoints=6` будет ошибкой. Значение не захардкожено.
+Если в тесте 5 вопросов по 1 баллу, максимум будет `5`, а проходной порог всё равно задаётся процентом.
 
 ## Attempts
 
@@ -360,14 +360,11 @@ Backend принимает и snake_case, и frontend camelCase:
 - `total_max`
 - `score_percent`
 - `passed`
-- `needs_review`
-- review fields
 
 Во frontend response скрыты:
 
 - `questions_snapshot`
 - `answers_data`
-- `needs_review`
 
 Автооценка работает для:
 
@@ -387,7 +384,7 @@ Manual review нужен для:
 - `video`
 - `code`
 
-Admin endpoint `POST /api/v1/attempts/{attemptID}/review` пересчитывает ручные баллы и снова применяет `passing_points`.
+Manual review endpoint сейчас не зарегистрирован в router. Manual-типы вопросов можно хранить, но полноценный review flow требует отдельной доработки.
 
 ## Enrollment и certificate
 
@@ -402,7 +399,7 @@ Enrollment:
 Certificate создаётся только если:
 
 - курс разрешает сертификаты;
-- attempt связан с этим курсом через `course_tests`;
+- attempt связан с этим курсом через `attempts.course_id`;
 - attempt принадлежит тому же user;
 - attempt `passed=true`;
 - сертификат ещё не был выдан.
@@ -465,7 +462,7 @@ Protected:
 - `GET /api/v1/dashboard`
 - `GET /api/v1/dashboard/me`
 - `GET /api/v1/quizzes`
-- `POST /api/v1/quizzes/{quizID}/attempts`
+- `POST /api/v1/courses/{courseID}/attempts`
 - `GET /api/v1/attempts`
 - `GET /api/v1/attempts/{attemptID}`
 - `GET /api/v1/enrollments`
@@ -493,11 +490,9 @@ Admin:
 - `POST /api/v1/quizzes`
 - `PUT /api/v1/quizzes/{quizID}`
 - `DELETE /api/v1/quizzes/{quizID}`
-- `POST /api/v1/attempts/{attemptID}/review`
 - `POST /api/v1/enrollments/{enrollmentID}/complete`
 - `POST /api/v1/certificates`
 - mutations for course modules/content blocks/reviews/notifications
-- `GET/POST/DELETE /api/v1/course-tests`
 - `GET/POST/PUT/DELETE /api/v1/webhooks`
 - `GET /api/v1/audit-logs`
 - `POST /api/v1/uploads`

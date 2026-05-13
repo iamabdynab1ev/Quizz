@@ -104,23 +104,25 @@ func buildUpdateAdminParams(existing domain.User, cfg config.SeedAdminConfig) do
 	email := cfg.Email
 	password := cfg.Password
 	isSuperAdmin := true
+	mustChangePassword := false
 
 	return domain.UpdateUserParams{
-		ID:           existing.ID,
-		Email:        &email,
-		GoogleID:     existing.GoogleID,
-		Password:     &password,
-		IsAdmin:      true,
-		IsSuperAdmin: &isSuperAdmin,
-		FirstName:    cfg.FirstName,
-		LastName:     cfg.LastName,
-		Patronymic:   cfg.Patronymic,
-		Phone:        existing.Phone,
-		IsMale:       existing.IsMale,
-		BirthDate:    existing.BirthDate,
-		Address:      existing.Address,
-		City:         existing.City,
-		AvatarURL:    existing.AvatarURL,
-		IsActive:     true,
+		ID:                 existing.ID,
+		Email:              &email,
+		GoogleID:           existing.GoogleID,
+		Password:           &password,
+		IsAdmin:            true,
+		IsSuperAdmin:       &isSuperAdmin,
+		MustChangePassword: &mustChangePassword,
+		FirstName:          cfg.FirstName,
+		LastName:           cfg.LastName,
+		Patronymic:         cfg.Patronymic,
+		Phone:              existing.Phone,
+		IsMale:             existing.IsMale,
+		BirthDate:          existing.BirthDate,
+		Address:            existing.Address,
+		City:               existing.City,
+		AvatarURL:          existing.AvatarURL,
+		IsActive:           true,
 	}
 }

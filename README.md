@@ -43,4 +43,5 @@ go vet ./...
 - Frontend должен использовать `is_admin`, а не `role`
 - Списки возвращают `data/total/limit/offset`
 - Правильные ответы в quiz response скрыты
-- Сертификат выдаётся по `passing_points`, то есть по реальным баллам теста
+- Сдача теста идёт через `POST /api/v1/courses/{courseID}/attempts`
+- Сертификат выдаётся после `passed=true`, где `score_percent >= quiz_pass_percent`

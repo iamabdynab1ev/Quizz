@@ -50,6 +50,9 @@ func (u *UserUseCase) Create(ctx context.Context, params domain.CreateUserParams
 
 		normalized.PasswordHash = &passwordHash
 	}
+	if normalized.PasswordHash != nil && normalized.IsAdmin && !normalized.IsSuperAdmin {
+		normalized.MustChangePassword = true
+	}
 
 	user, err := u.repository.Create(ctx, normalized)
 	if err != nil {
@@ -111,6 +114,20 @@ func (u *UserUseCase) Update(ctx context.Context, params domain.UpdateUserParams
 		}
 
 		normalized.PasswordHash = &passwordHash
+	}
+	if normalized.PasswordHash != nil && normalized.IsAdmin {
+		current, err := u.repository.GetByID(ctx, normalized.ID)
+		if err != nil {
+			return domain.User{}, fmt.Errorf("usecase users update get current user: %w", err)
+		}
+
+		isSuperAdmin := current.IsSuperAdmin
+		if normalized.IsSuperAdmin != nil && *normalized.IsSuperAdmin {
+			isSuperAdmin = true
+		}
+
+		mustChangePassword := !isSuperAdmin
+		normalized.MustChangePassword = &mustChangePassword
 	}
 
 	user, err := u.repository.Update(ctx, normalized)

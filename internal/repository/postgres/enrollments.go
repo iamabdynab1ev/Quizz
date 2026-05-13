@@ -64,71 +64,52 @@ func (r *EnrollmentRepository) GetByID(ctx context.Context, enrollmentID string)
 }
 
 func (r *EnrollmentRepository) List(ctx context.Context, filter domain.EnrollmentListFilter) ([]domain.Enrollment, int, error) {
-	buildQuery := func(includePagination bool) (string, []any) {
-		query := strings.Builder{}
-		if includePagination {
-			query.WriteString(`
-				SELECT id, course_id, user_id, status, enrolled_at, completed_at
-				FROM enrollments
-				WHERE 1 = 1
-			`)
-		} else {
-			query.WriteString(`
-				SELECT COUNT(*)
-				FROM enrollments
-				WHERE 1 = 1
-			`)
-		}
+	query := strings.Builder{}
+	query.WriteString(`
+		SELECT id, course_id, user_id, status, enrolled_at, completed_at,
+			COUNT(*) OVER() AS total_count
+		FROM enrollments
+		WHERE 1 = 1
+	`)
 
-		args := make([]any, 0, 5)
-		position := 1
+	args := make([]any, 0, 5)
+	position := 1
 
-		if filter.CourseID != nil {
-			query.WriteString(fmt.Sprintf(" AND course_id = $%d", position))
-			args = append(args, *filter.CourseID)
-			position++
-		}
-
-		if filter.UserID != nil {
-			query.WriteString(fmt.Sprintf(" AND user_id = $%d", position))
-			args = append(args, *filter.UserID)
-			position++
-		}
-
-		if filter.Status != nil {
-			query.WriteString(fmt.Sprintf(" AND status = $%d", position))
-			args = append(args, string(*filter.Status))
-			position++
-		}
-
-		if includePagination {
-			query.WriteString(fmt.Sprintf(" ORDER BY enrolled_at DESC LIMIT $%d OFFSET $%d", position, position+1))
-			args = append(args, filter.Limit, filter.Offset)
-		}
-
-		return query.String(), args
+	if filter.CourseID != nil {
+		query.WriteString(fmt.Sprintf(" AND course_id = $%d", position))
+		args = append(args, *filter.CourseID)
+		position++
 	}
 
-	countQuery, countArgs := buildQuery(false)
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("repository postgres enrollments list count: %w", err)
+	if filter.UserID != nil {
+		query.WriteString(fmt.Sprintf(" AND user_id = $%d", position))
+		args = append(args, *filter.UserID)
+		position++
 	}
 
-	query, args := buildQuery(true)
-	rows, err := r.pool.Query(ctx, query, args...)
+	if filter.Status != nil {
+		query.WriteString(fmt.Sprintf(" AND status = $%d", position))
+		args = append(args, string(*filter.Status))
+		position++
+	}
+
+	query.WriteString(fmt.Sprintf(" ORDER BY enrolled_at DESC LIMIT $%d OFFSET $%d", position, position+1))
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := r.pool.Query(ctx, query.String(), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repository postgres enrollments list query: %w", err)
 	}
 	defer rows.Close()
 
+	var total int
 	enrollments := make([]domain.Enrollment, 0, filter.Limit)
 	for rows.Next() {
-		enrollment, err := scanEnrollmentRow(rows)
+		enrollment, rowTotal, err := scanEnrollmentRowWithTotal(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("repository postgres enrollments list scan: %w", err)
 		}
-
+		total = rowTotal
 		enrollments = append(enrollments, enrollment)
 	}
 
@@ -220,4 +201,30 @@ func scanEnrollmentRow(scanner enrollmentRowScanner) (domain.Enrollment, error) 
 	enrollment.CompletedAt = optionalTime(completedAt)
 
 	return enrollment, nil
+}
+
+func scanEnrollmentRowWithTotal(scanner enrollmentRowScanner) (domain.Enrollment, int, error) {
+	var enrollment domain.Enrollment
+	var userID sql.NullString
+	var status string
+	var completedAt sql.NullTime
+	var total int
+
+	if err := scanner.Scan(
+		&enrollment.ID,
+		&enrollment.CourseID,
+		&userID,
+		&status,
+		&enrollment.EnrolledAt,
+		&completedAt,
+		&total,
+	); err != nil {
+		return domain.Enrollment{}, 0, err
+	}
+
+	enrollment.UserID = optionalString(userID)
+	enrollment.Status = domain.EnrollmentStatus(status)
+	enrollment.CompletedAt = optionalTime(completedAt)
+
+	return enrollment, total, nil
 }

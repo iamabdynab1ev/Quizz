@@ -19,6 +19,7 @@ import (
 	"lms-arvand-backend/internal/config"
 	httpHandler "lms-arvand-backend/internal/handler/http"
 	httpMiddleware "lms-arvand-backend/internal/handler/http/middleware"
+	"lms-arvand-backend/internal/recaptcha"
 	"lms-arvand-backend/internal/repository/postgres"
 	"lms-arvand-backend/internal/storage"
 	"lms-arvand-backend/internal/usecase"
@@ -113,6 +114,7 @@ func run() error {
 	loginAttemptRepository := postgres.NewLoginAttemptRepository(dbPool)
 	passwordResetRepository := postgres.NewPasswordResetRepository(dbPool)
 	googleVerifier := usecase.NewGoogleTokenInfoVerifier(cfg.Google.ClientID)
+	recaptchaVerifier := recaptcha.NewVerifier(cfg.Recaptcha.SecretKey, cfg.Recaptcha.MinScore, cfg.Recaptcha.Enabled)
 	authUseCase := usecase.NewAuthUseCase(
 		userRepository,
 		sessionRepository,
@@ -128,8 +130,7 @@ func run() error {
 		cfg.Auth.PasswordResetTokenTTL,
 		cfg.Auth.PasswordResetReturnToken,
 		googleVerifier,
-		cfg.Google.DefaultRole,
-	).WithAudit(auditLogger)
+	).WithAudit(auditLogger).WithRecaptcha(recaptchaVerifier)
 	authHandler := httpHandler.NewAuthHandler(logger, authUseCase, cfg.Google.ClientID)
 
 	courseRepository := postgres.NewCourseRepository(dbPool)
@@ -179,6 +180,7 @@ func run() error {
 	uploadStorage := storage.NewLocalFileStorage(cfg.Upload.Dir)
 	uploadUseCase := usecase.NewUploadUseCase(uploadStorage, cfg.Upload.MaxSizeBytes)
 	uploadsHandler := httpHandler.NewUploadsHandler(logger, uploadUseCase, cfg.Upload.MaxSizeBytes)
+	authUseCase.WithAvatarStorage(uploadStorage)
 
 	webhookRepository := postgres.NewWebhookRepository(dbPool)
 	webhookUseCase := usecase.NewWebhookUseCase(webhookRepository)

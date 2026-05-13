@@ -68,67 +68,50 @@ func (r *ReviewRepository) GetByID(ctx context.Context, reviewID string) (domain
 }
 
 func (r *ReviewRepository) List(ctx context.Context, filter domain.ReviewListFilter) ([]domain.Review, int, error) {
-	buildQuery := func(includePagination bool) (string, []any) {
-		query := strings.Builder{}
-		if includePagination {
-			query.WriteString(`
-				SELECT id, course_id, user_id::text, rating, text, status, created_at, moderated_at
-				FROM reviews
-				WHERE 1 = 1
-			`)
-		} else {
-			query.WriteString(`
-				SELECT COUNT(*)
-				FROM reviews
-				WHERE 1 = 1
-			`)
-		}
+	query := strings.Builder{}
+	query.WriteString(`
+		SELECT id, course_id, user_id::text, rating, text, status, created_at, moderated_at,
+			COUNT(*) OVER() AS total_count
+		FROM reviews
+		WHERE 1 = 1
+	`)
 
-		args := make([]any, 0, 5)
-		position := 1
-		if filter.CourseID != nil {
-			query.WriteString(fmt.Sprintf(" AND course_id = $%d::uuid", position))
-			args = append(args, *filter.CourseID)
-			position++
-		}
-		if filter.UserID != nil {
-			query.WriteString(fmt.Sprintf(" AND user_id = $%d::uuid", position))
-			args = append(args, *filter.UserID)
-			position++
-		}
-		if filter.Status != nil {
-			query.WriteString(fmt.Sprintf(" AND status = $%d", position))
-			args = append(args, string(*filter.Status))
-			position++
-		}
+	args := make([]any, 0, 5)
+	position := 1
 
-		if includePagination {
-			query.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
-			args = append(args, filter.Limit, filter.Offset)
-		}
-
-		return query.String(), args
+	if filter.CourseID != nil {
+		query.WriteString(fmt.Sprintf(" AND course_id = $%d::uuid", position))
+		args = append(args, *filter.CourseID)
+		position++
+	}
+	if filter.UserID != nil {
+		query.WriteString(fmt.Sprintf(" AND user_id = $%d::uuid", position))
+		args = append(args, *filter.UserID)
+		position++
+	}
+	if filter.Status != nil {
+		query.WriteString(fmt.Sprintf(" AND status = $%d", position))
+		args = append(args, string(*filter.Status))
+		position++
 	}
 
-	countQuery, countArgs := buildQuery(false)
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("repository postgres reviews list count: %w", err)
-	}
+	query.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
+	args = append(args, filter.Limit, filter.Offset)
 
-	query, args := buildQuery(true)
-	rows, err := r.pool.Query(ctx, query, args...)
+	rows, err := r.pool.Query(ctx, query.String(), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repository postgres reviews list query: %w", err)
 	}
 	defer rows.Close()
 
+	var total int
 	reviews := make([]domain.Review, 0, filter.Limit)
 	for rows.Next() {
-		review, err := scanReviewRow(rows)
+		review, rowTotal, err := scanReviewRowWithTotal(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("repository postgres reviews list scan: %w", err)
 		}
+		total = rowTotal
 		reviews = append(reviews, review)
 	}
 
@@ -163,20 +146,13 @@ func (r *ReviewRepository) Moderate(ctx context.Context, params domain.ModerateR
 
 func scanReviewRow(scanner reviewRowScanner) (domain.Review, error) {
 	var review domain.Review
-	var userID sql.NullString
-	var text sql.NullString
+	var userID, text sql.NullString
 	var status string
 	var moderatedAt sql.NullTime
 
 	if err := scanner.Scan(
-		&review.ID,
-		&review.CourseID,
-		&userID,
-		&review.Rating,
-		&text,
-		&status,
-		&review.CreatedAt,
-		&moderatedAt,
+		&review.ID, &review.CourseID, &userID, &review.Rating,
+		&text, &status, &review.CreatedAt, &moderatedAt,
 	); err != nil {
 		return domain.Review{}, err
 	}
@@ -186,4 +162,26 @@ func scanReviewRow(scanner reviewRowScanner) (domain.Review, error) {
 	review.Status = domain.ReviewStatus(status)
 	review.ModeratedAt = optionalTime(moderatedAt)
 	return review, nil
+}
+
+func scanReviewRowWithTotal(scanner reviewRowScanner) (domain.Review, int, error) {
+	var review domain.Review
+	var userID, text sql.NullString
+	var status string
+	var moderatedAt sql.NullTime
+	var total int
+
+	if err := scanner.Scan(
+		&review.ID, &review.CourseID, &userID, &review.Rating,
+		&text, &status, &review.CreatedAt, &moderatedAt,
+		&total,
+	); err != nil {
+		return domain.Review{}, 0, err
+	}
+
+	review.UserID = optionalString(userID)
+	review.Text = optionalString(text)
+	review.Status = domain.ReviewStatus(status)
+	review.ModeratedAt = optionalTime(moderatedAt)
+	return review, total, nil
 }

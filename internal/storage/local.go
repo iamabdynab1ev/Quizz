@@ -68,6 +68,26 @@ func (s *LocalFileStorage) Save(uploadType domain.UploadType, originalFilename s
 	return filepath.ToSlash(filepath.Join(s.publicPrefix, uploadTypeValue, datePart, uniqueName)), nil
 }
 
+func (s *LocalFileStorage) Delete(publicPath string) error {
+	trimmed := strings.TrimSpace(publicPath)
+	if trimmed == "" || !strings.HasPrefix(trimmed, s.publicPrefix+"/") {
+		return nil
+	}
+
+	relative := strings.TrimPrefix(trimmed, s.publicPrefix+"/")
+	baseDir := strings.TrimSpace(s.baseDir)
+	if baseDir == "" {
+		baseDir = "uploads"
+	}
+
+	filePath := filepath.Join(baseDir, filepath.FromSlash(relative))
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("storage delete file: %w", err)
+	}
+
+	return nil
+}
+
 func randomHexName(ext string) (string, error) {
 	var raw [12]byte
 	if _, err := rand.Read(raw[:]); err != nil {

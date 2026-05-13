@@ -70,58 +70,40 @@ func (r *WebhookRepository) GetByID(ctx context.Context, webhookID string) (doma
 }
 
 func (r *WebhookRepository) List(ctx context.Context, filter domain.WebhookListFilter) ([]domain.Webhook, int, error) {
-	buildQuery := func(includePagination bool) (string, []any) {
-		query := strings.Builder{}
-		if includePagination {
-			query.WriteString(`
-				SELECT id, name, url, events, secret, status, last_triggered_at, last_status_code, last_error, deliveries, failures, created_at, updated_at
-				FROM webhooks
-				WHERE 1 = 1
-			`)
-		} else {
-			query.WriteString(`
-				SELECT COUNT(*)
-				FROM webhooks
-				WHERE 1 = 1
-			`)
-		}
+	query := strings.Builder{}
+	query.WriteString(`
+		SELECT id, name, url, events, secret, status, last_triggered_at, last_status_code, last_error, deliveries, failures, created_at, updated_at,
+			COUNT(*) OVER() AS total_count
+		FROM webhooks
+		WHERE 1 = 1
+	`)
 
-		args := make([]any, 0, 3)
-		position := 1
+	args := make([]any, 0, 3)
+	position := 1
 
-		if filter.Status != nil {
-			query.WriteString(fmt.Sprintf(" AND status = $%d", position))
-			args = append(args, string(*filter.Status))
-			position++
-		}
-
-		if includePagination {
-			query.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
-			args = append(args, filter.Limit, filter.Offset)
-		}
-
-		return query.String(), args
+	if filter.Status != nil {
+		query.WriteString(fmt.Sprintf(" AND status = $%d", position))
+		args = append(args, string(*filter.Status))
+		position++
 	}
 
-	countQuery, countArgs := buildQuery(false)
-	var total int
-	if err := r.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("repository postgres webhooks list count: %w", err)
-	}
+	query.WriteString(fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", position, position+1))
+	args = append(args, filter.Limit, filter.Offset)
 
-	query, args := buildQuery(true)
-	rows, err := r.pool.Query(ctx, query, args...)
+	rows, err := r.pool.Query(ctx, query.String(), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repository postgres webhooks list query: %w", err)
 	}
 	defer rows.Close()
 
+	var total int
 	webhooks := make([]domain.Webhook, 0, filter.Limit)
 	for rows.Next() {
-		webhook, err := scanWebhookRow(rows)
+		webhook, rowTotal, err := scanWebhookRowWithTotal(rows)
 		if err != nil {
 			return nil, 0, fmt.Errorf("repository postgres webhooks list scan: %w", err)
 		}
+		total = rowTotal
 		webhooks = append(webhooks, webhook)
 	}
 
@@ -234,6 +216,43 @@ func (r *WebhookRepository) RecordDeliveryResult(ctx context.Context, webhookID 
 	}
 
 	return nil
+}
+
+func scanWebhookRowWithTotal(scanner webhookRowScanner) (domain.Webhook, int, error) {
+	var webhook domain.Webhook
+	var events []string
+	var status string
+	var lastTriggeredAt sql.NullTime
+	var lastStatusCode sql.NullInt32
+	var lastError sql.NullString
+	var total int
+
+	if err := scanner.Scan(
+		&webhook.ID,
+		&webhook.Name,
+		&webhook.URL,
+		&events,
+		&webhook.Secret,
+		&status,
+		&lastTriggeredAt,
+		&lastStatusCode,
+		&lastError,
+		&webhook.Deliveries,
+		&webhook.Failures,
+		&webhook.CreatedAt,
+		&webhook.UpdatedAt,
+		&total,
+	); err != nil {
+		return domain.Webhook{}, 0, err
+	}
+
+	webhook.Events = stringsToAppEventTypes(events)
+	webhook.Status = domain.WebhookStatus(status)
+	webhook.LastTriggeredAt = optionalTime(lastTriggeredAt)
+	webhook.LastStatusCode = optionalInt(lastStatusCode)
+	webhook.LastError = optionalString(lastError)
+
+	return webhook, total, nil
 }
 
 func scanWebhookRow(scanner webhookRowScanner) (domain.Webhook, error) {
